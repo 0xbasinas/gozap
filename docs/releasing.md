@@ -168,3 +168,21 @@ To show **Settings > Account** (sign in through the browser), the build needs th
 repository **variable** (not a secret; it is a public address) `API_URL`, for example `https://app.example.com`.
 `_publish.yml` passes it to the build. `pnpm setup:cloud` sets it for you (see [setup-cloud.md](setup-cloud.md)). Without
 it the Account section is hidden. Desktop releases are separate from website and API deploys.
+
+## When a merge does not start a release
+
+Pull requests from the repo owner turn on auto-merge with the workflow token (`GITHUB_TOKEN`). GitHub starts **no workflows** for
+anything done with that token, so such a merge (shown as merged by `app/github-actions`) gets no CI run on `main`, no release, no
+deploy, and its branch is not deleted.
+
+You do not have to do anything: **Catch up** (`.github/workflows/catch-up.yml`) runs every 15 minutes and
+
+1. looks at the last three days of `main`; if a commit changed files that should start **Publish stable release** (or **Deploy web
+   and API**, when `CLOUDFLARE_DEPLOY` is `true`) and no run exists for it or for a later commit, it starts that workflow by
+   hand (a manual start is allowed with the workflow token). A commit younger than ten minutes is left alone, so the normal trigger
+   gets its chance first, and a run that failed counts as "covered" (it is for you to look at, not to retry forever);
+2. deletes merged pull request branches that are still there and unchanged since the merge.
+
+To do it right away: Actions > **Catch up** > Run workflow. `node scripts/catch-up.mjs --dry-run` (with `gh` signed in) says what it would do.
+A merge you make yourself (not through the auto-merge job) starts the workflows normally, and a personal access token stored as
+the secret `AUTO_MERGE_TOKEN` makes the auto-merge job's merges count as yours, so catch-up is then only a safety net.

@@ -1,0 +1,33 @@
+name: Catch up
+# GitHub starts no workflows for a merge made with GITHUB_TOKEN (the auto-merge job does that), so such a merge gets no
+# release, no deploy and no branch clean-up. Every 15 minutes this looks for that and does it by hand. It changes nothing
+# when everything is fine. See docs/releasing.md ("When a merge does not start a release").
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write # start the release and deploy workflows
+  contents: write # delete merged branches
+  pull-requests: read
+
+concurrency:
+  group: catch-up
+  cancel-in-progress: false
+
+jobs:
+  catch-up:
+    name: Start what a bot merge did not
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Catch up
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLOUDFLARE_DEPLOY: ${{ vars.CLOUDFLARE_DEPLOY }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: node scripts/catch-up.mjs
