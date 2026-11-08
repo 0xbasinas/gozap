@@ -9,21 +9,25 @@ const NICKNAME_MAX = 40
 const when = (iso: string): string => new Date(iso).toLocaleString()
 
 /** Where you are signed in. Main calls the API as the signed-in person; the page only sees the list. */
-export function DevicesSection(): React.JSX.Element {
+export function DevicesSection({ onLoaded }: { onLoaded?: () => void }): React.JSX.Element {
   const [devices, setDevices] = useState<Device[]>()
   const [error, setError] = useState<string>()
   const [editing, setEditing] = useState<string>()
   const [draft, setDraft] = useState('')
 
-  const show = useCallback((answer: DevicesResult, isCancelled: () => boolean): void => {
-    if (isCancelled()) return
-    if (answer.ok) {
-      setDevices(answer.devices)
-      setError(undefined)
-    } else {
-      setError(answer.error)
-    }
-  }, [])
+  const show = useCallback(
+    (answer: DevicesResult, isCancelled: () => boolean): void => {
+      if (isCancelled()) return
+      if (answer.ok) {
+        setDevices(answer.devices)
+        setError(undefined)
+      } else {
+        setError(answer.error)
+      }
+      onLoaded?.()
+    },
+    [onLoaded]
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -50,7 +54,12 @@ export function DevicesSection(): React.JSX.Element {
         </p>
       )}
       {devices === undefined && !error && (
-        <p className="text-sm text-muted-foreground">Loading...</p>
+        // Holds the height of one device row, so the page below does not jump when the list arrives.
+        <div
+          role="status"
+          aria-label="Loading devices"
+          className="h-[74px] animate-pulse rounded-lg border bg-muted/30"
+        />
       )}
       <ul className="space-y-2">
         {devices?.map((device) => (

@@ -22,8 +22,8 @@ export function FeedbackSection({ signedIn }: { signedIn: boolean }): React.JSX.
   if (!signedIn) {
     return (
       <p className="text-sm text-muted-foreground">
-        Sign in (see Account above) to send feedback. It is stored with your account so you can see
-        or delete it later.
+        Sign in from Settings &gt; Account to send feedback. It is stored with your account so you
+        can see or delete it later.
       </p>
     )
   }

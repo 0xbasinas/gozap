@@ -34,7 +34,27 @@ export function openSettingsWindow(parent?: BrowserWindow): void {
   })
   settingsWindow = win
 
-  win.on('ready-to-show', () => win.show())
+  // Show the window only once the page has filled in (it sets data-ready), so it does not flash empty and then jump.
+  // The wait is capped, so a slow or failed load still opens the window.
+  let shown = false
+  const show = (): void => {
+    if (shown || win.isDestroyed()) return
+    shown = true
+    win.show()
+  }
+  win.once('ready-to-show', () => {
+    const ready = `new Promise((resolve) => {
+      const started = Date.now()
+      const timer = setInterval(() => {
+        if (document.documentElement.dataset.ready || Date.now() - started > 1500) {
+          clearInterval(timer)
+          resolve()
+        }
+      }, 16)
+    })`
+    win.webContents.executeJavaScript(ready).then(show, show)
+  })
+  setTimeout(show, 3000)
   win.on('closed', () => (settingsWindow = undefined))
   hardenWindow(win)
   watchTheme(win)
