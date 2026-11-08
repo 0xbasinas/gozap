@@ -1,7 +1,7 @@
 // IPC channel names and payload types shared by main, preload and renderer.
 // Add new channels here first so all three processes stay in sync.
 
-import type { Preferences } from '@repo/shared'
+import type { Device, FeedbackKind, Preferences } from '@repo/shared'
 
 export const IPC = {
   // renderer -> main (invoke)
@@ -13,6 +13,13 @@ export const IPC = {
   settingsOpenWindow: 'settings:open-window',
   appInfo: 'app:info',
   appOpenLogs: 'app:open-logs',
+  appDiagnostics: 'app:diagnostics',
+  feedbackSend: 'feedback:send',
+  devicesList: 'devices:list',
+  devicesRename: 'devices:rename',
+  devicesSignOut: 'devices:sign-out',
+  syncStatus: 'sync:status',
+  syncRetry: 'sync:retry',
   whatsNewGet: 'whats-new:get',
   whatsNewSeen: 'whats-new:seen',
   accountGet: 'account:get',
@@ -22,6 +29,7 @@ export const IPC = {
   updaterEvent: 'updater:event',
   settingsChanged: 'settings:changed',
   accountChanged: 'account:changed',
+  syncChanged: 'sync:changed',
   menuCheckUpdates: 'menu:check-updates',
   menuWhatsNew: 'menu:whats-new',
   deepLink: 'deeplink:url',
@@ -46,6 +54,8 @@ export interface Settings {
   closeToTray: boolean
   /** Start the app when you sign in (Windows and macOS, packaged builds only). */
   launchAtLogin: boolean
+  /** Show native notifications (for example when an update is ready to install). */
+  notifications: boolean
   /** Send anonymous crash reports (only offered when this build has a crash-report endpoint). */
   crashReports: boolean
 }
@@ -81,4 +91,16 @@ export interface WhatsNew {
   version: string
   /** Release notes as Markdown. */
   notes: string
+}
+
+/** What an account action answers: done, or why not (in words the person can read). */
+export type ActionResult = { ok: true } | { ok: false; error: string }
+export type FeedbackResult = ActionResult
+export type DevicesResult = { ok: true; devices: Device[] } | { ok: false; error: string }
+
+/** What the feedback form sends to main. `includeDiagnostics` attaches the report from Settings. */
+export interface FeedbackRequest {
+  kind: FeedbackKind
+  message: string
+  includeDiagnostics: boolean
 }

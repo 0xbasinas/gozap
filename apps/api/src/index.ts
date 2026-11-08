@@ -1,5 +1,7 @@
 import * as Sentry from '@sentry/cloudflare'
 import { createApp } from './app'
+import { createDb } from './db'
+import { deleteDueAccounts } from './deletion'
 import type { Bindings } from './env'
 import { withPreviewUrl } from './preview'
 
@@ -19,5 +21,12 @@ export default Sentry.withSentry(
     tracesSampleRate: 0,
     dataCollection: { userInfo: false }
   }),
-  { fetch: (request, env: Bindings, ctx) => app.fetch(request, withPreviewUrl(request, env), ctx) }
+  {
+    fetch: (request, env: Bindings, ctx) => app.fetch(request, withPreviewUrl(request, env), ctx),
+    // Once a day (see triggers in wrangler.jsonc): remove accounts whose deletion cooling-off period is over.
+    scheduled: async (_controller, env: Bindings) => {
+      const removed = await deleteDueAccounts(createDb(env.DB), Date.now())
+      if (removed > 0) console.log(`Deleted ${removed} account(s) whose cooling-off period ended`)
+    }
+  }
 )

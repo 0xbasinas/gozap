@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { detectPlatform, parseRelease, pickAsset } from './download'
+import {
+  detectPlatform,
+  filterReleases,
+  formatSize,
+  parseRelease,
+  parseReleases,
+  pickAsset,
+  pickChecksums
+} from './download'
 
 const asset = (name: string): { name: string; browser_download_url: string; size: number } => ({
   name,
@@ -55,5 +63,45 @@ describe('parseRelease', () => {
     expect(parseRelease(null)).toBeNull()
     expect(parseRelease({ tag_name: 1 })).toBeNull()
     expect(parseRelease('x')).toBeNull()
+  })
+})
+
+describe('pickChecksums', () => {
+  it('finds the SHA256SUMS file', () => {
+    expect(pickChecksums([asset('a.exe'), asset('SHA256SUMS.txt')])?.name).toBe('SHA256SUMS.txt')
+    expect(pickChecksums([asset('a.exe')])).toBeNull()
+  })
+})
+
+describe('formatSize', () => {
+  it('uses KB and MB', () => {
+    expect(formatSize(10)).toBe('1 KB')
+    expect(formatSize(2048)).toBe('2 KB')
+    expect(formatSize(88 * 1024 * 1024)).toBe('88.0 MB')
+  })
+})
+
+describe('releases list', () => {
+  const rel = (tag: string, prerelease: boolean): unknown => ({
+    tag_name: tag,
+    html_url: 'https://github.com/o/r/releases/tag/' + tag,
+    assets: [],
+    prerelease,
+    published_at: '2026-01-01T00:00:00Z'
+  })
+  const list = parseReleases([
+    rel('v2', false),
+    rel('v2-beta', true),
+    { nope: 1 },
+    rel('v1', false)
+  ])
+  it('drops malformed entries and non-arrays', () => {
+    expect(list.map((r) => r.tag_name)).toEqual(['v2', 'v2-beta', 'v1'])
+    expect(parseReleases({})).toEqual([])
+  })
+  it('filters by channel', () => {
+    expect(filterReleases(list, 'stable').map((r) => r.tag_name)).toEqual(['v2', 'v1'])
+    expect(filterReleases(list, 'beta').map((r) => r.tag_name)).toEqual(['v2-beta'])
+    expect(filterReleases(list, 'all')).toHaveLength(3)
   })
 })

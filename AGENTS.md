@@ -12,21 +12,22 @@ Package manager is **pnpm** (never npm or yarn). Node 24. Run commands from the 
 
 ## Commands
 
-| Task                                | Command                                                                                |
-| ----------------------------------- | -------------------------------------------------------------------------------------- |
-| Install                             | `pnpm install`                                                                         |
-| Run in development                  | `pnpm dev`                                                                             |
-| Format / lint / typecheck           | `pnpm format` / `pnpm lint` / `pnpm typecheck`                                         |
-| Unit tests (src, scripts)           | `pnpm test` (and `pnpm test:scripts` for the root `scripts/` folder)                   |
-| Set up website + API accounts       | `pnpm setup:cloud` (interactive; needs the user's own Cloudflare/Resend accounts)      |
-| Update an app from the template     | `pnpm template:update` (apps made from the template only; opens a PR; `--adopt` first) |
-| Check the cloud setup               | `pnpm cloud:doctor` (read-only; safe to run, never prints secret values)               |
-| Build the app                       | `pnpm build` (typechecks first)                                                        |
-| Bundle size budget                  | `pnpm check:bundle` (after `pnpm build`)                                               |
-| Package unpacked app                | `pnpm build:unpack`                                                                    |
-| End-to-end tests (packaged app)     | `pnpm build:unpack && pnpm test:e2e`                                                   |
-| Update test (old build updates new) | `pnpm test:update` (builds installers; needs a working NSIS/AppImage toolchain)        |
-| Check installers vs update manifest | `pnpm build:win` (or `:mac`, `:linux`) `--publish never` then `pnpm check:release`     |
+| Task                                     | Command                                                                                |
+| ---------------------------------------- | -------------------------------------------------------------------------------------- |
+| Install                                  | `pnpm install`                                                                         |
+| Run in development                       | `pnpm dev`                                                                             |
+| Format / lint / typecheck                | `pnpm format` / `pnpm lint` / `pnpm typecheck`                                         |
+| Unit tests (src, scripts)                | `pnpm test` (and `pnpm test:scripts` for the root `scripts/` folder)                   |
+| Fill the local database with fake people | `pnpm seed:dev [--users N]` (local D1 only; never touches the real database)           |
+| Set up website + API accounts            | `pnpm setup:cloud` (interactive; needs the user's own Cloudflare/Resend accounts)      |
+| Update an app from the template          | `pnpm template:update` (apps made from the template only; opens a PR; `--adopt` first) |
+| Check the cloud setup                    | `pnpm cloud:doctor` (read-only; safe to run, never prints secret values)               |
+| Build the app                            | `pnpm build` (typechecks first)                                                        |
+| Bundle size budget                       | `pnpm check:bundle` (after `pnpm build`)                                               |
+| Package unpacked app                     | `pnpm build:unpack`                                                                    |
+| End-to-end tests (packaged app)          | `pnpm build:unpack && pnpm test:e2e`                                                   |
+| Update test (old build updates new)      | `pnpm test:update` (builds installers; needs a working NSIS/AppImage toolchain)        |
+| Check installers vs update manifest      | `pnpm build:win` (or `:mac`, `:linux`) `--publish never` then `pnpm check:release`     |
 
 Before saying a change is done, run at least: `pnpm format && pnpm lint && pnpm typecheck && pnpm test`. For
 anything touching main, preload, the window or IPC, also `pnpm build:unpack && pnpm test:e2e`.
@@ -96,7 +97,7 @@ only third-party runtime modules go in `dependencies` (electron-builder packages
 
 ## Website, API and sign-in
 
-- Never put secrets in `apps/api/wrangler.jsonc` (it only holds `database_id`, `BETTER_AUTH_URL`, `EMAIL_FROM`, `TRUSTED_ORIGINS` and `routes`).
+- Never put secrets in `apps/api/wrangler.jsonc` (it only holds `database_id`, `BETTER_AUTH_URL`, `EMAIL_FROM`, `TRUSTED_ORIGINS`, `routes` and the daily cron `triggers`).
   Secrets (`BETTER_AUTH_SECRET`, `RESEND_API_KEY`) are set in Cloudflare by `pnpm setup:cloud` or `wrangler secret put`.
   Do not run `pnpm setup:cloud` for the user: it needs their accounts and keys, so tell them to run it.
   `pnpm cloud:doctor` only reads, so run it when something about sign-in or deploys looks wrong. Pull request previews
@@ -111,6 +112,7 @@ only third-party runtime modules go in `dependencies` (electron-builder packages
 - Per-person data that must follow them between devices goes through `/api/preferences` (last write wins, local copy first, best-effort sync):
   see `packages/shared/src/preferences.ts` and the theme in `apps/web/src/lib/theme.ts` and `apps/desktop/src/main/preferencesSync.ts`.
 - Anything you store per person needs `ON DELETE CASCADE` on the user and a place in the account export (`apps/api/src/app.ts`).
+- `apps/web/public/.well-known/security.txt` must be renewed before its `Expires` date (it is valid for at most a year, RFC 9116); the list on `/sub-processors` is `SUBPROCESSORS` in `apps/web/src/config.ts`: edit both to match the accounts you really use.
 - Web and API deploy from `.github/workflows/deploy-web.yml` (off until `CLOUDFLARE_DEPLOY=true`); it never releases the desktop app.
 
 ## Release system in one paragraph

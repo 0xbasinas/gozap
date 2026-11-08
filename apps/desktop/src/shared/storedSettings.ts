@@ -9,6 +9,7 @@ export const defaults: Settings = {
   updateChannel: 'latest',
   closeToTray: false,
   launchAtLogin: false,
+  notifications: true,
   crashReports: false
 }
 
@@ -34,6 +35,7 @@ export function parseStored(raw: unknown): Stored {
     updateChannel: saved.updateChannel === 'beta' ? 'beta' : defaults.updateChannel,
     closeToTray: saved.closeToTray === true,
     launchAtLogin: saved.launchAtLogin === true,
+    notifications: saved.notifications !== false,
     crashReports: saved.crashReports === true,
     lastSeenVersion: typeof saved.lastSeenVersion === 'string' ? saved.lastSeenVersion : ''
   }

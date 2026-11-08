@@ -20,6 +20,7 @@
     "template:update": "node scripts/template-update.mjs",
     "template:status": "node scripts/template-update.mjs --check",
     "compat:date": "node scripts/compat-date.mjs --write",
+    "seed:dev": "node scripts/seed-dev.mjs",
     "test:scripts": "node --test \"scripts/*.test.mjs\"",
     "prepare": "husky",
     "check:bundle": "pnpm --filter ./apps/desktop run check:bundle",

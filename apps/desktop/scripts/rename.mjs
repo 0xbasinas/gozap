@@ -64,6 +64,8 @@ const edits = {
   // The Worker, database and deep-link names, and the product name in emails and on passkey prompts.
   'apps/api/wrangler.jsonc': (s) => s.replaceAll(oldName, name).replaceAll(oldTitle, title),
   'apps/api/wrangler.preview-migrations.jsonc': (s) => s.replaceAll(oldName, name),
+  'apps/web/public/.well-known/security.txt': (s) =>
+    s.replaceAll(`${oldOwner}/${oldName}`, `${owner}/${name}`),
   'apps/web/index.html': (s) => s.replace(/<title>.*<[/]title>/, `<title>${title}</title>`),
   'README.md': (s) =>
     s.replace(/^# .*$/m, `# ${title}`).replaceAll(`${oldOwner}/${oldName}`, `${owner}/${name}`),

@@ -1,6 +1,9 @@
 import { createApiClient } from '@repo/shared/client'
 import { reconcile, type PreferencesRecord } from '@repo/shared'
 import logger from 'electron-log/main'
+import { BrowserWindow } from 'electron'
+import { IPC } from '../shared/ipc'
+import type { SyncStatus } from '../shared/syncStatus'
 import { accountAvailable, apiUrl, authenticatedFetch, getAccount, onAccountChanged } from './auth'
 import { applyRemotePreferences, getPreferencesRecord, onSettingsChanged } from './settings'
 
@@ -8,6 +11,15 @@ import { applyRemotePreferences, getPreferencesRecord, onSettingsChanged } from 
 // uses, so everything works offline; this only reconciles with the account when it can. Last write wins (see
 // reconcile in @repo/shared), and a failed attempt is simply retried by the next trigger, because the local copy
 // stays the newer one until it has been sent.
+
+let status: SyncStatus = { state: 'signed-out', lastSyncedAt: null }
+
+export const getSyncStatus = (): SyncStatus => status
+
+function setStatus(next: Partial<SyncStatus> & Pick<SyncStatus, 'state'>): void {
+  status = { ...status, ...next }
+  for (const win of BrowserWindow.getAllWindows()) win.webContents.send(IPC.syncChanged, status)
+}
 
 const RETRY_MS = 10 * 60 * 1000
 let running = false
@@ -20,7 +32,11 @@ const local = (): PreferencesRecord => {
 
 async function syncOnce(): Promise<void> {
   const account = await getAccount()
-  if (!account.user) return
+  if (!account.user) {
+    setStatus({ state: 'signed-out' })
+    return
+  }
+  setStatus({ state: 'syncing' })
   const api = createApiClient({ baseUrl: apiUrl(), fetch: authenticatedFetch })
 
   const mine = local()
@@ -35,6 +51,7 @@ async function syncOnce(): Promise<void> {
   ) {
     applyRemotePreferences(saved.preferences, saved.updatedAt)
   }
+  setStatus({ state: 'synced', lastSyncedAt: Date.now() })
 }
 
 /** Run a sync; calls that arrive meanwhile are folded into one more run afterwards. Never throws. */
@@ -53,6 +70,7 @@ export async function syncPreferences(): Promise<void> {
   } catch (error) {
     // Offline, or the API is down: stay with the local copy and try again later.
     logger.warn('[sync] could not sync preferences', error)
+    setStatus({ state: 'offline' })
   } finally {
     running = false
   }
@@ -63,6 +81,7 @@ export function startPreferencesSync(): void {
   if (!accountAvailable()) return
   onAccountChanged((account) => {
     if (account.user) void syncPreferences()
+    else setStatus({ state: 'signed-out' })
   })
   onSettingsChanged((next, previous) => {
     if (next.theme !== previous.theme || next.accent !== previous.accent) void syncPreferences()

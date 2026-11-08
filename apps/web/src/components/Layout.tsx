@@ -1,6 +1,6 @@
 import type { JSX } from 'react'
 import { cn } from '@repo/ui'
-import { NavLink, Outlet } from 'react-router'
+import { Link, NavLink, Outlet } from 'react-router'
 import { SITE_NAME } from '../config'
 import { authClient } from '../lib/auth'
 
@@ -22,6 +22,9 @@ export function Layout(): JSX.Element {
           <div className="flex items-center gap-5">
             <NavLink to="/download" className={link}>
               Download
+            </NavLink>
+            <NavLink to="/releases" className={link}>
+              Releases
             </NavLink>
             <NavLink to="/app" className={link}>
               Open web app
@@ -51,7 +54,18 @@ export function Layout(): JSX.Element {
         <Outlet />
       </main>
       <footer className="border-t border-border py-6 text-center text-xs text-muted-foreground">
-        {SITE_NAME}
+        {SITE_NAME} ·{' '}
+        <Link className="underline" to="/feedback">
+          Feedback
+        </Link>{' '}
+        ·{' '}
+        <Link className="underline" to="/sub-processors">
+          Sub-processors
+        </Link>{' '}
+        ·{' '}
+        <a className="underline" href="/.well-known/security.txt">
+          Security
+        </a>
       </footer>
     </div>
   )

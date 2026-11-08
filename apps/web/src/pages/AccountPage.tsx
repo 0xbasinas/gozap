@@ -1,13 +1,12 @@
 import { useEffect, useState, type FormEvent, type JSX } from 'react'
 import { Button } from '@repo/ui'
-import { ACCENTS, type Account, type Preferences } from '@repo/shared'
+import { ACCENTS, DELETION_COOLING_OFF_DAYS, type Account, type Preferences } from '@repo/shared'
 import { Navigate, useNavigate } from 'react-router'
+import { DevicesSection } from '../components/DevicesSection'
 import { api } from '../lib/api'
 import { authClient } from '../lib/auth'
-import { AccentPicker } from '@repo/ui'
+import { AccentPicker, ThemePicker, type ThemeChoice } from '@repo/ui'
 import { currentAccent, currentTheme, setAccent, setTheme, syncTheme } from '../lib/theme'
-
-type ThemeChoice = 'system' | 'light' | 'dark'
 
 interface PasskeyRow {
   id: string
@@ -166,12 +165,28 @@ function AccountDetails(): JSX.Element {
     setBusy(true)
     setError(null)
     try {
-      await api.account.remove(confirmEmail)
-      await navigate('/')
-      window.location.reload()
+      const { scheduledFor } = await api.account.remove(confirmEmail)
+      setAccount((a) => (a ? { ...a, deletionScheduledFor: scheduledFor } : a))
+      setConfirmEmail('')
     } catch (e) {
       console.error(e)
       setError('Could not delete the account. Check that the email is typed exactly.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function keepAccount(): Promise<void> {
+    setBusy(true)
+    setError(null)
+    try {
+      await api.account.cancelDeletion()
+      setAccount((a) => (a ? { ...a, deletionScheduledFor: null } : a))
+      setMessage('Your account will stay. The deletion was cancelled.')
+    } catch (e) {
+      console.error(e)
+      setError('Could not cancel the deletion.')
+    } finally {
       setBusy(false)
     }
   }
@@ -204,16 +219,7 @@ function AccountDetails(): JSX.Element {
           The theme and accent colour follow you: change them here or in the desktop app and the
           other one catches up.
         </p>
-        <select
-          aria-label="Theme"
-          value={theme}
-          onChange={(e) => void chooseTheme(e.target.value as ThemeChoice)}
-          className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-        >
-          <option value="system">Match my system</option>
-          <option value="light">Light</option>
-          <option value="dark">Dark</option>
-        </select>
+        <ThemePicker value={theme} onChange={(next) => void chooseTheme(next)} />
         <AccentPicker
           accents={ACCENTS}
           value={accent}
@@ -263,6 +269,8 @@ function AccountDetails(): JSX.Element {
         </Button>
       </section>
 
+      <DevicesSection />
+
       <section className="space-y-2">
         <h2 className="text-lg font-semibold">Your data</h2>
         <p className="text-sm text-muted-foreground">
@@ -274,26 +282,43 @@ function AccountDetails(): JSX.Element {
         </Button>
       </section>
 
-      <section className="space-y-2 rounded-lg border border-destructive/40 p-4">
-        <h2 className="text-lg font-semibold text-destructive">Delete account</h2>
-        <p className="text-sm text-muted-foreground">
-          Permanently deletes your account, your settings and your sign-ins. This cannot be undone.
-          Type your email to confirm.
-        </p>
-        <form onSubmit={(e) => void remove(e)} className="flex gap-2">
-          <input
-            value={confirmEmail}
-            onChange={(e) => setConfirmEmail(e.target.value)}
-            placeholder={account?.email ?? 'you@example.com'}
-            aria-label="Confirm your email"
-            autoComplete="off"
-            className="h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm"
-          />
-          <Button type="submit" variant="destructive" disabled={busy || !matches}>
-            Delete my account
+      {account?.deletionScheduledFor ? (
+        <section className="space-y-2 rounded-lg border border-destructive/40 p-4">
+          <h2 className="text-lg font-semibold text-destructive">Deletion scheduled</h2>
+          <p className="text-sm text-muted-foreground">
+            Your account will be deleted on{' '}
+            {new Date(account.deletionScheduledFor).toLocaleDateString(undefined, {
+              dateStyle: 'long'
+            })}
+            . Until then nothing is removed. We also emailed you a link to cancel.
+          </p>
+          <Button variant="outline" disabled={busy} onClick={() => void keepAccount()}>
+            Keep my account
           </Button>
-        </form>
-      </section>
+        </section>
+      ) : (
+        <section className="space-y-2 rounded-lg border border-destructive/40 p-4">
+          <h2 className="text-lg font-semibold text-destructive">Delete account</h2>
+          <p className="text-sm text-muted-foreground">
+            Deletes your account, your settings and your sign-ins after {DELETION_COOLING_OFF_DAYS}{' '}
+            days. Until then you can change your mind here or from the email we send. Type your
+            email to confirm.
+          </p>
+          <form onSubmit={(e) => void remove(e)} className="flex gap-2">
+            <input
+              value={confirmEmail}
+              onChange={(e) => setConfirmEmail(e.target.value)}
+              placeholder={account?.email ?? 'you@example.com'}
+              aria-label="Confirm your email"
+              autoComplete="off"
+              className="h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm"
+            />
+            <Button type="submit" variant="destructive" disabled={busy || !matches}>
+              Delete my account
+            </Button>
+          </form>
+        </section>
+      )}
     </div>
   )
 }

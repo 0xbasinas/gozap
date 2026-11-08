@@ -33,6 +33,12 @@ let client: AuthClient | null = null
 function makeClient(baseURL: string): AuthClient {
   return createAuthClient({
     baseURL,
+    // Tells the server what this is, so the device list can say "Desktop app on Windows" (see describeDevice in @repo/shared).
+    fetchOptions: {
+      headers: {
+        'user-agent': `${app.getName()}/${app.getVersion()} Electron/${process.versions.electron} (${process.platform})`
+      }
+    },
     plugins: [
       electronClient({
         signInURL: `${baseURL}/sign-in`,

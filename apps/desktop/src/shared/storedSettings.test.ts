@@ -30,6 +30,11 @@ describe('parseStored', () => {
     expect(parseStored({ accent: 5 }).accent).toBe('neutral')
   })
 
+  it('turns notifications on unless they were switched off', () => {
+    expect(parseStored({}).notifications).toBe(true)
+    expect(parseStored({ notifications: false }).notifications).toBe(false)
+  })
+
   it('ignores a negative or non-numeric timestamp', () => {
     expect(parseStored({ themeUpdatedAt: -5 }).themeUpdatedAt).toBe(0)
     expect(parseStored({ themeUpdatedAt: '9' }).themeUpdatedAt).toBe(0)

@@ -34,10 +34,12 @@ describe('createApiClient', () => {
     const fetchFn = vi
       .fn()
       .mockResolvedValueOnce(json(record))
-      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(json({ scheduledFor: '2026-12-01T00:00:00.000Z' }, 202))
     const api = createApiClient({ fetch: fetchFn })
     expect(await api.preferences.put(record as never)).toEqual(record)
-    await api.account.remove('me@example.com')
+    expect(await api.account.remove('me@example.com')).toEqual({
+      scheduledFor: '2026-12-01T00:00:00.000Z'
+    })
     expect(fetchFn.mock.calls[1]![0]).toBe('/api/account')
     expect(fetchFn.mock.calls[1]![1].method).toBe('DELETE')
   })

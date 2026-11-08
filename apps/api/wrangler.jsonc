@@ -7,6 +7,9 @@
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
 
+  // Once a day, remove accounts whose deletion cooling-off period is over (see the scheduled handler in src/index.ts).
+  "triggers": { "crons": ["17 3 * * *"] },
+
   // Filled in by `pnpm setup:cloud` when the site has its own domain: [{ "pattern": "app.example.com", "custom_domain": true }]
   "routes": [{ "pattern": "app.gozap.xyz", "custom_domain": true }],
 

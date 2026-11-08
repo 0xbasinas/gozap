@@ -27,6 +27,7 @@ test('packaged app opens and the renderer talks to main', async () => {
       updateChannel: 'latest',
       closeToTray: false,
       launchAtLogin: false,
+      notifications: true,
       crashReports: false
     })
 
@@ -203,15 +204,58 @@ test('closing the window hides it to the tray when that setting is on', async ()
   try {
     const page = await app.firstWindow()
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+    const windowState = (): Promise<{ count: number; visible: boolean | undefined }> =>
+      app.evaluate(({ BrowserWindow }) => {
+        const windows = BrowserWindow.getAllWindows()
+        return { count: windows.length, visible: windows[0]?.isVisible() }
+      })
+    // The window is shown a moment after the page renders (ready-to-show). Closing it before that would be
+    // undone by the late show(), which is what made this test fail now and then.
+    await expect.poll(windowState).toEqual({ count: 1, visible: true })
 
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close())
 
     // The window is hidden, not destroyed, and the app is still running.
-    const state = await app.evaluate(({ BrowserWindow }) => {
-      const windows = BrowserWindow.getAllWindows()
-      return { count: windows.length, visible: windows[0]?.isVisible() }
-    })
-    expect(state).toEqual({ count: 1, visible: false })
+    await expect.poll(windowState).toEqual({ count: 1, visible: false })
+  } finally {
+    await app.close()
+  }
+})
+
+test('the command palette opens with Ctrl+K and runs a command', async () => {
+  const app = await launchApp()
+  try {
+    const page = await app.firstWindow()
+    await page.getByRole('dialog').getByRole('button', { name: 'Get started' }).click()
+
+    await page.keyboard.press('Control+k')
+    const palette = page.getByRole('dialog', { name: 'Command palette' })
+    await expect(palette).toBeVisible()
+    await page.keyboard.type('dark')
+    await expect(palette.getByRole('option')).toHaveCount(1)
+    await page.keyboard.press('Enter')
+    await expect(palette).toBeHidden()
+
+    await expect
+      .poll(() =>
+        page.evaluate(async () => (await (window as unknown as WithApi).api.getSettings()).theme)
+      )
+      .toBe('dark')
+  } finally {
+    await app.close()
+  }
+})
+
+test('the diagnostics report has no account details or home folder,', async () => {
+  const app = await launchApp()
+  try {
+    const page = await app.firstWindow()
+    const report = await page.evaluate(() => (window as unknown as WithApi).api.getDiagnostics())
+    expect(report).toContain('## GPU')
+    expect(report).toContain('## Settings')
+    expect(report).toContain('notifications: true')
+    const home = await app.evaluate(({ app: a }) => a.getPath('home'))
+    expect(report).not.toContain(home)
   } finally {
     await app.close()
   }

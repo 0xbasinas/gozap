@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { WhatsNew } from '../../shared/ipc'
 import logo from './assets/logo.png'
+import { CommandPalette } from '@renderer/components/CommandPalette'
+import type { Command } from '@renderer/components/commandFilter'
 import { TitleBar } from '@renderer/components/TitleBar'
 import { TitleBarButton } from '@renderer/components/TitleBarButton'
 import { UpdateBanner } from '@renderer/components/UpdateBanner'
@@ -12,7 +14,7 @@ import { useUpdater } from '@renderer/hooks/useUpdater'
 function App(): React.JSX.Element {
   const { electron, chrome, node } = window.api.versions
   const updater = useUpdater()
-  const { settings } = useSettings()
+  const { settings, update } = useSettings()
   const [whatsNew, setWhatsNew] = useState<WhatsNew>()
   const [opened, setOpened] = useState<string>()
 
@@ -38,8 +40,48 @@ function App(): React.JSX.Element {
     void window.api.markWhatsNewSeen()
   }, [])
 
+  const commands = useMemo<Command[]>(
+    () => [
+      { id: 'settings', label: 'Open settings', run: () => void window.api.openSettings() },
+      { id: 'updates', label: 'Check for updates', run: updater.check },
+      {
+        id: 'whats-new',
+        label: "What's new",
+        run: () => void window.api.getWhatsNew(true).then(setWhatsNew)
+      },
+      { id: 'logs', label: 'Show log file', run: () => void window.api.openLogs() },
+      {
+        id: 'diagnostics',
+        label: 'Copy diagnostics report',
+        keywords: 'bug report debug',
+        run: () =>
+          void window.api.getDiagnostics().then((report) => navigator.clipboard.writeText(report))
+      },
+      {
+        id: 'theme-light',
+        label: 'Theme: light',
+        keywords: 'appearance',
+        run: () => void update({ theme: 'light' })
+      },
+      {
+        id: 'theme-dark',
+        label: 'Theme: dark',
+        keywords: 'appearance night',
+        run: () => void update({ theme: 'dark' })
+      },
+      {
+        id: 'theme-system',
+        label: 'Theme: match my system',
+        keywords: 'appearance',
+        run: () => void update({ theme: 'system' })
+      }
+    ],
+    [updater.check, update]
+  )
+
   return (
     <>
+      <CommandPalette commands={commands} />
       <TitleBar>
         <TitleBarButton
           label={updater.checking ? 'Checking for updates...' : 'Check for updates'}

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -32,10 +32,18 @@ vi.mock('./lib/auth', () => ({
     revokeSessions: auth.revoke
   }
 }))
-const accountApi = vi.hoisted(() => ({ get: vi.fn(), export: vi.fn(), remove: vi.fn() }))
+const accountApi = vi.hoisted(() => ({
+  get: vi.fn(),
+  export: vi.fn(),
+  remove: vi.fn(),
+  cancelDeletion: vi.fn(),
+  cancelDeletionWithToken: vi.fn()
+}))
 const prefsApi = vi.hoisted(() => ({ get: vi.fn(), put: vi.fn() }))
+const feedbackApi = vi.hoisted(() => ({ send: vi.fn() }))
+const devicesApi = vi.hoisted(() => ({ list: vi.fn(), rename: vi.fn(), signOut: vi.fn() }))
 vi.mock('./lib/api', () => ({
-  api: { account: accountApi, preferences: prefsApi }
+  api: { account: accountApi, preferences: prefsApi, feedback: feedbackApi, devices: devicesApi }
 }))
 
 beforeEach(() => {
@@ -53,7 +61,8 @@ beforeEach(() => {
     id: 'u1',
     email: 'ada@example.com',
     name: 'ada',
-    createdAt: '2026-01-01T00:00:00.000Z'
+    createdAt: '2026-01-01T00:00:00.000Z',
+    deletionScheduledFor: null
   })
   localStorage.clear()
   prefsApi.get.mockReset().mockResolvedValue({
@@ -61,8 +70,31 @@ beforeEach(() => {
     updatedAt: 0
   })
   prefsApi.put.mockReset().mockImplementation((r: unknown) => Promise.resolve(r))
+  devicesApi.list.mockReset().mockResolvedValue([
+    {
+      id: 'd1',
+      label: 'Chrome on Windows',
+      nickname: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      lastSeenAt: '2026-01-02T00:00:00.000Z',
+      current: true
+    },
+    {
+      id: 'd2',
+      label: 'Desktop app on macOS',
+      nickname: 'Work laptop',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      lastSeenAt: '2026-01-02T00:00:00.000Z',
+      current: false
+    }
+  ])
+  devicesApi.rename.mockReset().mockResolvedValue(undefined)
+  devicesApi.signOut.mockReset().mockResolvedValue(undefined)
+  feedbackApi.send.mockReset().mockResolvedValue({ id: 'f1' })
   accountApi.export.mockReset()
-  accountApi.remove.mockReset().mockResolvedValue(undefined)
+  accountApi.remove.mockReset().mockResolvedValue({ scheduledFor: '2026-12-01T00:00:00.000Z' })
+  accountApi.cancelDeletion.mockReset().mockResolvedValue(undefined)
+  accountApi.cancelDeletionWithToken.mockReset().mockResolvedValue(undefined)
 })
 
 const at = (path: string): void => {
@@ -121,6 +153,35 @@ describe('routes', () => {
       .getAllByRole('link')
       .filter((l) => l.getAttribute('href')?.endsWith('.exe'))
     expect(installers).toHaveLength(1)
+  })
+
+  it('lists releases and filters them by channel', async () => {
+    const rel = (tag: string, prerelease: boolean): unknown => ({
+      tag_name: tag,
+      html_url: 'https://github.com/o/r/releases/tag/' + tag,
+      assets: [],
+      prerelease,
+      published_at: '2026-01-01T00:00:00Z'
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue({ ok: true, json: async () => [rel('v2', false), rel('v2-beta', true)] })
+    )
+    at('/releases')
+    expect(await screen.findByRole('heading', { name: 'v2' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /v2-beta/ })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Beta' }))
+    expect(screen.getByRole('heading', { name: /v2-beta/ })).toBeInTheDocument()
+  })
+
+  it('lists the sub-processors', () => {
+    at('/sub-processors')
+    expect(screen.getByRole('heading', { name: 'Sub-processors' })).toBeInTheDocument()
+    for (const name of ['Cloudflare', 'Resend', 'GitHub']) {
+      expect(screen.getByRole('heading', { name })).toBeInTheDocument()
+    }
   })
 
   it('falls back to GitHub when the lookup fails', async () => {
@@ -211,6 +272,31 @@ describe('signing in from the desktop app', () => {
   })
 })
 
+describe('cancel deletion page', () => {
+  it('cancels only when the button is pressed', async () => {
+    at('/account/cancel-deletion?token=abc')
+    expect(accountApi.cancelDeletionWithToken).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByRole('button', { name: 'Keep my account' }))
+    await waitFor(() => expect(accountApi.cancelDeletionWithToken).toHaveBeenCalledWith('abc'))
+    expect(await screen.findByRole('heading', { name: 'Your account is safe' })).toBeInTheDocument()
+  })
+
+  it('says so when the link no longer works', async () => {
+    accountApi.cancelDeletionWithToken.mockRejectedValue(new Error('404'))
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    at('/account/cancel-deletion?token=abc')
+    await userEvent.click(screen.getByRole('button', { name: 'Keep my account' }))
+    expect(
+      await screen.findByRole('heading', { name: 'This link does not work' })
+    ).toBeInTheDocument()
+  })
+
+  it('has nothing to do without a token', () => {
+    at('/account/cancel-deletion')
+    expect(screen.getByRole('heading', { name: 'This link does not work' })).toBeInTheDocument()
+  })
+})
+
 describe('account page', () => {
   it('sends signed-out visitors to the sign-in page', () => {
     at('/account')
@@ -230,6 +316,23 @@ describe('account page', () => {
     expect(button).toBeEnabled()
     await userEvent.click(button)
     await waitFor(() => expect(accountApi.remove).toHaveBeenCalledWith('Ada@Example.com'))
+    expect(await screen.findByText(/Your account will be deleted on/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Delete my account' })).not.toBeInTheDocument()
+  })
+
+  it('shows a scheduled deletion and lets you keep the account', async () => {
+    auth.session = { user: { email: 'ada@example.com' } }
+    accountApi.get.mockResolvedValue({
+      id: 'u1',
+      email: 'ada@example.com',
+      name: 'ada',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      deletionScheduledFor: '2026-12-01T00:00:00.000Z'
+    })
+    at('/account')
+    await userEvent.click(await screen.findByRole('button', { name: 'Keep my account' }))
+    await waitFor(() => expect(accountApi.cancelDeletion).toHaveBeenCalled())
+    expect(await screen.findByRole('button', { name: 'Delete my account' })).toBeInTheDocument()
   })
 
   it('signs out everywhere', async () => {
@@ -276,7 +379,7 @@ describe('theme sync', () => {
   it('saves a chosen theme here and on the server', async () => {
     auth.session = { user: { email: 'ada@example.com' } }
     at('/account')
-    await userEvent.selectOptions(await screen.findByLabelText('Theme'), 'dark')
+    await userEvent.click(await screen.findByRole('radio', { name: 'Dark' }))
     await waitFor(() =>
       expect(prefsApi.put).toHaveBeenCalledWith(
         expect.objectContaining({ preferences: { theme: 'dark', accent: 'neutral' } })
@@ -293,14 +396,14 @@ describe('theme sync', () => {
       updatedAt: Date.now() + 1000
     })
     at('/account')
-    await waitFor(() => expect(screen.getByLabelText('Theme')).toHaveValue('light'))
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Light' })).toBeChecked())
     expect(prefsApi.put).not.toHaveBeenCalled()
   })
 
   it('saves a chosen accent colour without resetting the theme', async () => {
     auth.session = { user: { email: 'ada@example.com' } }
     at('/account')
-    await userEvent.selectOptions(await screen.findByLabelText('Theme'), 'dark')
+    await userEvent.click(await screen.findByRole('radio', { name: 'Dark' }))
     await userEvent.click(await screen.findByRole('radio', { name: 'Accent blue' }))
     await waitFor(() =>
       expect(prefsApi.put).toHaveBeenLastCalledWith(
@@ -316,8 +419,66 @@ describe('theme sync', () => {
     prefsApi.put.mockRejectedValue(new Error('offline'))
     vi.spyOn(console, 'error').mockImplementation(() => {})
     at('/account')
-    await userEvent.selectOptions(await screen.findByLabelText('Theme'), 'dark')
+    await userEvent.click(await screen.findByRole('radio', { name: 'Dark' }))
     expect(await screen.findByRole('status')).toHaveTextContent('Saved on this device')
     expect(document.documentElement.classList.contains('dark')).toBe(true)
+  })
+})
+
+describe('feedback page', () => {
+  it('sends you to sign in first', () => {
+    at('/feedback')
+    expect(screen.getByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
+  })
+
+  it('sends the message with its kind and thanks you', async () => {
+    auth.session = { user: { email: 'ada@example.com' } }
+    at('/feedback')
+    await userEvent.click(await screen.findByRole('radio', { name: 'An idea' }))
+    await userEvent.type(screen.getByLabelText('Your message'), 'Please add a dark mode')
+    await userEvent.click(screen.getByRole('button', { name: 'Send feedback' }))
+    await waitFor(() =>
+      expect(feedbackApi.send).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'idea', message: 'Please add a dark mode', source: 'web' })
+      )
+    )
+    expect(await screen.findByRole('status')).toHaveTextContent('Thank you')
+  })
+
+  it('shows why sending failed', async () => {
+    auth.session = { user: { email: 'ada@example.com' } }
+    feedbackApi.send.mockRejectedValue(new Error('You have sent a lot of feedback.'))
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    at('/feedback')
+    await userEvent.type(await screen.findByLabelText('Your message'), 'Something is wrong')
+    await userEvent.click(screen.getByRole('button', { name: 'Send feedback' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('a lot of feedback')
+  })
+})
+
+describe('devices', () => {
+  it('lists where you are signed in, and signs another one out', async () => {
+    auth.session = { user: { email: 'ada@example.com' } }
+    at('/account')
+    expect(await screen.findByText('Work laptop')).toBeInTheDocument()
+    expect(screen.getByText('This device')).toBeInTheDocument()
+    // Only the other device can be signed out from here.
+    const buttons = within(screen.getByRole('region', { name: 'Your devices' })).getAllByRole(
+      'button',
+      { name: 'Sign out' }
+    )
+    expect(buttons).toHaveLength(1)
+    await userEvent.click(buttons[0]!)
+    await waitFor(() => expect(devicesApi.signOut).toHaveBeenCalledWith('d2'))
+  })
+
+  it('renames a device', async () => {
+    auth.session = { user: { email: 'ada@example.com' } }
+    at('/account')
+    await screen.findByText('Work laptop')
+    await userEvent.click(screen.getAllByRole('button', { name: 'Rename' })[0]!)
+    await userEvent.type(screen.getByLabelText('Device name'), 'Home PC')
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(devicesApi.rename).toHaveBeenCalledWith('d1', 'Home PC'))
   })
 })
