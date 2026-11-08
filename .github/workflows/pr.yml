@@ -42,6 +42,9 @@ jobs:
           github.actor == github.repository_owner ||
           (github.actor == 'dependabot[bot]' && steps.meta.outputs.update-type != 'version-update:semver-major')
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # A merge made with GITHUB_TOKEN does not start any workflow, so no release is published and the branch is
+          # not deleted. Use a personal access token (secret AUTO_MERGE_TOKEN: contents + pull requests write) so the
+          # merge counts as yours. Without the secret this falls back to GITHUB_TOKEN and those steps are skipped.
+          GH_TOKEN: ${{ secrets.AUTO_MERGE_TOKEN || secrets.GITHUB_TOKEN }}
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: gh pr merge --auto --squash "$PR_URL"

@@ -59,9 +59,15 @@ jobs:
       - name: Create or update the preview
         id: preview
         run: |
-          pnpm --filter @repo/api exec wrangler preview --name "$PREVIEW_NAME" --json > "$RUNNER_TEMP/preview.json"
-          cat "$RUNNER_TEMP/preview.json"
-          url=$(jq -r '.preview.urls[0]' "$RUNNER_TEMP/preview.json")
+          # wrangler prints progress lines ("Building list of assets...") before the JSON, so keep only the JSON.
+          pnpm --filter @repo/api exec wrangler preview --name "$PREVIEW_NAME" --json > "$RUNNER_TEMP/preview.out"
+          cat "$RUNNER_TEMP/preview.out"
+          sed -n '/^{/,$p' "$RUNNER_TEMP/preview.out" > "$RUNNER_TEMP/preview.json"
+          url=$(jq -r '.preview.urls[0] // empty' "$RUNNER_TEMP/preview.json")
+          if [ -z "$url" ]; then
+            echo "::error::Cloudflare created the preview but gave it no address. Previews need a workers.dev subdomain on the account (Cloudflare dashboard > Workers & Pages > Account details), then re-run this job. See docs/api.md (Previews)."
+            exit 1
+          fi
           echo "url=$url" >> "$GITHUB_OUTPUT"
       - name: Check that it is up
         run: |

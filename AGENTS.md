@@ -134,6 +134,10 @@ Details: [docs/releasing.md](docs/releasing.md).
 - macOS auto-update needs code signing, which is not set up; the update test therefore skips macOS.
 - GitHub takes a minute to recompute mergeability after a push or a branch-protection change; "blocked" can be stale.
 - `makensis` can fail to spawn on some local Node versions (`ENOTCONN`); CI is the reference for installer builds.
+- A merge made with `GITHUB_TOKEN` (the "Turn on auto-merge" job does this unless the `AUTO_MERGE_TOKEN` secret is set) starts no workflows:
+  no CI on `main`, no release, and the branch is not deleted. Check `gh pr view N --json mergedBy`; if it says `app/github-actions`, run
+  "Publish stable release" by hand (Actions > Run workflow) and delete the branch. Pushing to a PR branch re-runs that job and can take
+  over a `gh pr merge --auto` you set yourself.
 - Do not run long waits as foreground `sleep`; use the background-task or watch mechanisms your tool provides.
 
 ## Do not
