@@ -1,0 +1,57 @@
+name: Back up the database
+# A daily export of the production D1 database, encrypted and kept as a workflow artifact for 30 days.
+# D1 Time Travel only reaches back 7 days on the free plan; this gives you a month and a file you hold yourself.
+# It stays off until deploys are on (CLOUDFLARE_DEPLOY=true) and the secret BACKUP_PASSPHRASE exists.
+on:
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  HUSKY: 0
+
+jobs:
+  backup:
+    name: Export, check and encrypt
+    if: vars.CLOUDFLARE_DEPLOY == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Export the production database
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          if [ -z "$BACKUP_PASSPHRASE" ]; then
+            echo "::error::The secret BACKUP_PASSPHRASE is missing. The file would be readable by anyone on a public repository, so nothing is exported. See docs/api.md (Backups)."
+            exit 1
+          fi
+          pnpm --filter @repo/api exec wrangler d1 export DB --remote --output "$RUNNER_TEMP/backup.sql"
+      # A backup you have never restored is a hope, not a backup: load it into an empty scratch database every time.
+      - name: Check that the export restores
+        run: |
+          pnpm --filter @repo/api exec wrangler d1 execute DB --local --persist-to "$RUNNER_TEMP/restore-check" --file "$RUNNER_TEMP/backup.sql"
+          pnpm --filter @repo/api exec wrangler d1 execute DB --local --persist-to "$RUNNER_TEMP/restore-check" --command "SELECT COUNT(*) AS users FROM user"
+      - name: Encrypt
+        env:
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: openssl enc -aes-256-cbc -pbkdf2 -iter 600000 -salt -in "$RUNNER_TEMP/backup.sql" -out "$RUNNER_TEMP/backup.sql.enc" -pass env:BACKUP_PASSPHRASE
+      - name: Keep the encrypted file
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: d1-backup-${{ github.run_id }}
+          path: ${{ runner.temp }}/backup.sql.enc
+          retention-days: 30
+          if-no-files-found: error

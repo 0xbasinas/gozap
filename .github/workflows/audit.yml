@@ -1,0 +1,38 @@
+name: Dependency audit
+# New advisories are published all the time, so this also runs on a schedule, not just on changes.
+# The same check runs on every pull request as part of CI.
+on:
+  schedule:
+    - cron: '23 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - id: audit
+        run: pnpm audit --audit-level high
+      - name: Open an issue when it fails
+        if: failure() && steps.audit.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --label security --state open --search "Dependency audit in:title" --json number --jq '.[0].number')
+          if [ -z "$existing" ]; then
+            gh label create security --color d73a4a --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+            gh issue create --repo "$GITHUB_REPOSITORY" --label security \
+              --title "Dependency audit found high-severity advisories" \
+              --body "The scheduled audit failed: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          fi

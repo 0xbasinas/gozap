@@ -1,0 +1,6 @@
+{
+  "dir": "out/renderer/assets",
+  "maxTotalJsGzipKB": 100,
+  "maxChunkGzipKB": 90,
+  "maxTotalCssGzipKB": 12
+}

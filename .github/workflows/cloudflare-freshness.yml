@@ -1,0 +1,53 @@
+name: Cloudflare freshness
+# Dependabot already proposes new wrangler/workerd versions. It cannot move `compatibility_date`, so once a week this
+# checks that it is not behind (or ahead of) the installed runtime, and keeps one open issue while it needs attention.
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  HUSKY: 0
+
+jobs:
+  check:
+    name: Check compatibility_date
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - id: check
+        run: |
+          set +e
+          node scripts/compat-date.mjs | tee result.txt
+          echo "code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+      - name: Open or update the issue
+        if: steps.check.outputs.code == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          body="$(cat result.txt)
+
+          Fix: run \`pnpm compat:date\`, then \`pnpm --filter @repo/api types\` and the API tests, and open a pull request."
+          existing="$(gh issue list --label cloudflare-freshness --state open --json number --jq '.[0].number')"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh label create cloudflare-freshness --color 0e8a16 --description "Worker runtime settings need an update" 2>/dev/null || true
+            gh issue create --title "Update the Worker compatibility_date" --label cloudflare-freshness --body "$body"
+          fi
+      - name: Fail on a real error
+        if: steps.check.outputs.code != '0' && steps.check.outputs.code != '1'
+        run: exit 1

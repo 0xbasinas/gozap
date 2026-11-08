@@ -1,0 +1,42 @@
+{
+  "name": "@repo/api",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Hono API on Cloudflare Workers: sign-in (Better Auth magic links) on D1",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "wrangler deploy --dry-run --outdir dist",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "types": "wrangler types",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
+    "auth:schema": "auth generate --config src/auth.cli.ts --output src/db/auth-schema.ts -y"
+  },
+  "dependencies": {
+    "@better-auth/drizzle-adapter": "^1.7.18",
+    "@better-auth/electron": "^1.7.18",
+    "@better-auth/passkey": "^1.7.18",
+    "@hono/zod-validator": "^0.9.1",
+    "@repo/shared": "workspace:*",
+    "@sentry/cloudflare": "^11.11.0",
+    "better-auth": "^1.7.18",
+    "drizzle-orm": "^0.45.4",
+    "hono": "4.13.16",
+    "resend": "^6.37.0",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.6.0",
+    "auth": "^1.7.18",
+    "drizzle-kit": "^0.31.11",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "wrangler": "^4.158.0"
+  }
+}

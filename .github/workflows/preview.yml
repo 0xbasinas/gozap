@@ -1,0 +1,99 @@
+name: Preview
+# Every pull request that changes the website or API gets its own live copy of the Worker (a Cloudflare "Preview"),
+# so reviewers can click through the change before it merges. The copy is deleted when the pull request closes.
+# All Previews share one staging database, never the production one. Off until CLOUDFLARE_DEPLOY=true.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    paths:
+      - 'apps/web/**'
+      - 'apps/api/**'
+      - 'packages/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/preview.yml'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+# A newer push replaces a running preview build; closing the PR must still be able to clean up.
+concurrency:
+  group: preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: ${{ github.event.action != 'closed' }}
+
+env:
+  HUSKY: 0
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+  PREVIEW_NAME: pr-${{ github.event.pull_request.number }}
+
+jobs:
+  deploy:
+    name: Deploy preview
+    # Pull requests from forks and from Dependabot cannot read secrets (and must not be able to use them).
+    if: >-
+      github.event.action != 'closed' &&
+      vars.CLOUDFLARE_DEPLOY == 'true' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Check that the preview database is set up
+        run: |
+          if grep -q '00000000-0000-0000-0000-000000000001' apps/api/wrangler.preview-migrations.jsonc; then
+            echo "::error::The preview database is not set up. Run pnpm setup:cloud, or create it and put its id in apps/api/wrangler.jsonc (previews) and wrangler.preview-migrations.jsonc. See docs/api.md (Previews)."
+            exit 1
+          fi
+      # Build the site first: the Worker serves apps/web/dist next to /api.
+      - run: pnpm exec turbo run build --filter=@repo/web
+      - name: Apply database migrations to the preview database
+        run: pnpm --filter @repo/api exec wrangler d1 migrations apply DB --remote --config wrangler.preview-migrations.jsonc
+      - name: Create or update the preview
+        id: preview
+        run: |
+          pnpm --filter @repo/api exec wrangler preview --name "$PREVIEW_NAME" --json > "$RUNNER_TEMP/preview.json"
+          cat "$RUNNER_TEMP/preview.json"
+          url=$(jq -r '.preview.urls[0]' "$RUNNER_TEMP/preview.json")
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+      - name: Check that it is up
+        run: |
+          for i in 1 2 3 4 5 6; do
+            if curl -fsS "${{ steps.preview.outputs.url }}/api/health"; then exit 0; fi
+            sleep 10
+          done
+          echo "::error::The preview did not answer /api/health"
+          exit 1
+      - name: Comment the address on the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          URL: ${{ steps.preview.outputs.url }}
+        run: |
+          gh pr comment "$PR" --edit-last --create-if-none --body "Preview of ${{ github.event.pull_request.head.sha }}: $URL
+
+          It uses a shared staging database, not production. Sign-in emails are not sent from previews; the link is in the Worker log (\`wrangler tail\`). The preview is deleted when this pull request closes."
+
+  cleanup:
+    name: Delete preview
+    if: github.event.action == 'closed' && vars.CLOUDFLARE_DEPLOY == 'true' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # A pull request that never got a preview (no relevant changes, or Dependabot) has nothing to delete.
+      - run: pnpm --filter @repo/api exec wrangler preview delete --name "$PREVIEW_NAME" --skip-confirmation
+        continue-on-error: true

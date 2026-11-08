@@ -1,0 +1,194 @@
+/* Shared theme: colour tokens (light and dark) and base styles. Import it after `@import 'tailwindcss'`. */
+/* Tell Tailwind to scan this package's components for class names. */
+@source './';
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --radius: 0.625rem;
+  color-scheme: light;
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  color-scheme: dark;
+}
+
+/* Accent colour presets. The app sets data-accent on <html> (any element works, which the colour swatches in Settings rely on); "neutral" (no override) is the original black/white look.
+   Each preset recolours the primary buttons, the focus ring and checked checkboxes, in light and dark. */
+/* Neutral is spelled out so a neutral swatch looks neutral even when the page itself uses another accent. */
+[data-accent='neutral'] {
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --ring: oklch(0.708 0 0);
+}
+[data-accent='blue'] {
+  --primary: oklch(0.546 0.215 262);
+  --primary-foreground: oklch(0.985 0 0);
+  --ring: oklch(0.546 0.215 262);
+}
+[data-accent='violet'] {
+  --primary: oklch(0.541 0.23 293);
+  --primary-foreground: oklch(0.985 0 0);
+  --ring: oklch(0.541 0.23 293);
+}
+[data-accent='green'] {
+  --primary: oklch(0.527 0.154 150);
+  --primary-foreground: oklch(0.985 0 0);
+  --ring: oklch(0.527 0.154 150);
+}
+[data-accent='orange'] {
+  --primary: oklch(0.646 0.222 41);
+  --primary-foreground: oklch(0.145 0 0);
+  --ring: oklch(0.646 0.222 41);
+}
+[data-accent='rose'] {
+  --primary: oklch(0.586 0.253 17);
+  --primary-foreground: oklch(0.985 0 0);
+  --ring: oklch(0.586 0.253 17);
+}
+.dark[data-accent='neutral'],
+.dark [data-accent='neutral'] {
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --ring: oklch(0.556 0 0);
+}
+.dark[data-accent='blue'],
+.dark [data-accent='blue'] {
+  --primary: oklch(0.707 0.165 254);
+  --primary-foreground: oklch(0.145 0 0);
+  --ring: oklch(0.707 0.165 254);
+}
+.dark[data-accent='violet'],
+.dark [data-accent='violet'] {
+  --primary: oklch(0.702 0.183 293);
+  --primary-foreground: oklch(0.145 0 0);
+  --ring: oklch(0.702 0.183 293);
+}
+.dark[data-accent='green'],
+.dark [data-accent='green'] {
+  --primary: oklch(0.723 0.219 150);
+  --primary-foreground: oklch(0.145 0 0);
+  --ring: oklch(0.723 0.219 150);
+}
+.dark[data-accent='orange'],
+.dark [data-accent='orange'] {
+  --primary: oklch(0.75 0.183 55);
+  --primary-foreground: oklch(0.145 0 0);
+  --ring: oklch(0.75 0.183 55);
+}
+.dark[data-accent='rose'],
+.dark [data-accent='rose'] {
+  --primary: oklch(0.712 0.194 13);
+  --primary-foreground: oklch(0.145 0 0);
+  --ring: oklch(0.712 0.194 13);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+
+  /* Thin, quiet scrollbars that follow the theme: the thumb is a faint tint of the text colour, the track is invisible. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--foreground) 22%, transparent) transparent;
+  }
+
+  /* Checkboxes in the theme colours instead of the browser's default blue/white box. */
+  input[type='checkbox'] {
+    appearance: none;
+    position: relative;
+    flex: none;
+    width: 1rem;
+    height: 1rem;
+    border: 1px solid var(--input);
+    border-radius: 0.25rem;
+    background: transparent;
+    cursor: pointer;
+    transition:
+      background-color 0.15s,
+      border-color 0.15s;
+  }
+  input[type='checkbox']:hover:not(:disabled) {
+    border-color: var(--ring);
+  }
+  input[type='checkbox']:checked {
+    border-color: var(--primary);
+    background: var(--primary);
+  }
+  input[type='checkbox']:checked::after {
+    content: '';
+    position: absolute;
+    left: 0.28rem;
+    top: 0.08rem;
+    width: 0.28rem;
+    height: 0.52rem;
+    border: solid var(--primary-foreground);
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+  }
+  input[type='checkbox']:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  input[type='checkbox']:disabled {
+    cursor: not-allowed;
+  }
+}

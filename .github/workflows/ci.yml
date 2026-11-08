@@ -1,0 +1,161 @@
+name: CI
+# Runs on pull requests, and is also called by the publish workflows as a gate before they release.
+# Pushes that don't trigger a publish (docs, tests, CI and config changes) get their own run below.
+on:
+  pull_request:
+  workflow_call:
+  push:
+    branches: [main, beta]
+    paths:
+      - '.github/**'
+      - 'docs/**'
+      - 'apps/*/tests/**'
+      - 'apps/desktop/scripts/**'
+      - '**.md'
+      - '**/*.test.ts'
+      - '**/*.test.tsx'
+      - 'eslint.config.mjs'
+      - 'turbo.json'
+      - 'apps/desktop/vitest.config.ts'
+      - 'apps/desktop/playwright.config.ts'
+      - 'apps/desktop/playwright.update.config.ts'
+      - 'commitlint.config.mjs'
+      - 'apps/desktop/bundle-budget.json'
+      - '.prettier*'
+
+permissions:
+  contents: read
+
+# GitHub's release downloads time out (504) often enough to fail whole runs, so CI fetches Electron and electron-builder's
+# tools from the npmmirror copies. Electron downloads are checked against the checksums.json bundled in the electron
+# package, so a bad file is still rejected. Releases (_publish.yml) still download from GitHub.
+env:
+  HUSKY: 0
+  ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+  ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
+
+jobs:
+  check:
+    name: Lint, types, tests, bundle size
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Commit messages follow Conventional Commits
+        if: github.event_name == 'pull_request'
+        run: pnpm exec commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }} --verbose
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm test:scripts
+      - run: pnpm build
+      - run: pnpm check:bundle
+
+  smoke:
+    name: Smoke test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Package the app (unpacked)
+        run: pnpm build:unpack
+      - name: Check the Electron fuses (test build)
+        working-directory: apps/desktop
+        run: node scripts/check-fuses.mjs --test-build
+      - name: Launch the packaged app and check the window opens
+        if: runner.os != 'Linux'
+        run: pnpm test:e2e
+      - name: Launch the packaged app and check the window opens (virtual display)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a pnpm test:e2e
+
+  # Builds an old and a new version, then checks the old one finds, downloads and reports the new one
+  # from a local feed. This is what catches packaging and updater mistakes before users do.
+  update:
+    name: Update test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build old and new versions
+        working-directory: apps/desktop
+        run: node scripts/prepare-update-e2e.mjs
+      - name: Old version updates to the new one
+        if: runner.os != 'Linux'
+        working-directory: apps/desktop
+        run: pnpm exec playwright test -c playwright.update.config.ts
+      - name: Old version updates to the new one (virtual display)
+        if: runner.os == 'Linux'
+        working-directory: apps/desktop
+        run: xvfb-run -a pnpm exec playwright test -c playwright.update.config.ts
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Fail on known high-severity vulnerabilities
+        run: pnpm audit --audit-level high
+
+  # Builds the real installers on each system, exactly as a release would, without publishing, and checks
+  # that the update manifest and the files agree. Only on pull requests: releases build them anyway.
+  package:
+    name: Package dry run (${{ matrix.os }})
+    if: github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            script: build:linux
+          - os: windows-latest
+            script: build:win
+          - os: macos-latest
+            script: build:mac
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build the installers (nothing is published)
+        run: pnpm run ${{ matrix.script }} --publish never
+      - name: Check the update manifest against the files
+        run: pnpm check:release
+      - name: Check the Electron fuses (hardened release build)
+        run: pnpm check:fuses

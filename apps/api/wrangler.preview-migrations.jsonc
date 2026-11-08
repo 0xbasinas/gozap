@@ -1,0 +1,13 @@
+{
+  // Only used to apply the database migrations to the shared preview database (see .github/workflows/preview.yml).
+  // Keep database_name and database_id the same as in "previews" in wrangler.jsonc; `pnpm setup:cloud` does that.
+  "name": "electron-desktop-template",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "electron-desktop-template-preview",
+      "database_id": "00000000-0000-0000-0000-000000000001",
+      "migrations_dir": "drizzle"
+    }
+  ]
+}

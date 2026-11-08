@@ -1,0 +1,55 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Electron Desktop Template</title>
+    <!-- https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+    />
+    <style>
+      /* Splash: shown until React mounts and replaces #root's contents. */
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #ffffff;
+        color: #0a0a0a;
+      }
+      @media (prefers-color-scheme: dark) {
+        html,
+        body {
+          background: #0a0a0a;
+          color: #fafafa;
+        }
+      }
+      .splash {
+        display: grid;
+        height: 100vh;
+        place-items: center;
+      }
+      .splash i {
+        width: 28px;
+        height: 28px;
+        border: 3px solid currentColor;
+        border-right-color: transparent;
+        border-radius: 50%;
+        opacity: 0.5;
+        animation: splash-spin 0.7s linear infinite;
+      }
+      @keyframes splash-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <div id="root">
+      <div class="splash"><i></i></div>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

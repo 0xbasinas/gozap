@@ -1,0 +1,41 @@
+name: Publish beta pre-release
+# Same as the stable publisher, but for the beta branch: published as a pre-release that only
+# people on the beta update channel receive.
+on:
+  push:
+    branches: [beta]
+    paths:
+      - 'apps/desktop/src/**'
+      - '!apps/desktop/src/**/*.test.ts'
+      - '!apps/desktop/src/**/*.test.tsx'
+      - 'apps/desktop/build/**'
+      - 'apps/desktop/resources/**'
+      - 'apps/desktop/package.json'
+      - 'apps/desktop/electron-builder.yml'
+      - 'apps/desktop/electron.vite.config.ts'
+      - 'packages/**'
+      - '!packages/**/*.test.ts'
+      - '!packages/**/*.test.tsx'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: publish-beta
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    name: CI gate
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: Publish
+    needs: ci
+    uses: ./.github/workflows/_publish.yml
+    with:
+      channel: beta

@@ -1,0 +1,47 @@
+name: Pull request
+# Squash merges use the PR title as the commit message, so it must follow Conventional Commits
+# (that is what the release notes are built from). Safe PRs then merge themselves once CI is green.
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  title:
+    name: PR title is a Conventional Commit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          pattern='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9._/-]+\))?!?: .+'
+          if ! echo "$TITLE" | grep -Eq "$pattern"; then
+            echo "::error::PR title must look like 'feat: add thing' or 'fix(ui): correct thing'. Got: $TITLE"
+            exit 1
+          fi
+
+  auto-merge:
+    name: Turn on auto-merge
+    needs: title
+    runs-on: ubuntu-latest
+    # Dependabot patch/minor updates and PRs opened by the repo owner merge themselves when checks pass.
+    # Major updates and everyone else's PRs wait for a person to merge.
+    if: github.event.pull_request.draft == false
+    steps:
+      - id: meta
+        if: github.actor == 'dependabot[bot]'
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Enable auto-merge (squash)
+        if: >-
+          github.actor == github.repository_owner ||
+          (github.actor == 'dependabot[bot]' && steps.meta.outputs.update-type != 'version-update:semver-major')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge --auto --squash "$PR_URL"

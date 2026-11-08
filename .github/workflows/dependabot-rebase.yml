@@ -1,0 +1,33 @@
+name: Keep Dependabot PRs up to date
+# Every merge to main can leave open Dependabot PRs in conflict, usually in pnpm-lock.yaml.
+# After each push to main, ask Dependabot to rebase any of its PRs that now conflict, so they
+# are recreated on top of the new lockfile instead of waiting for someone to notice.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  pull-requests: write
+
+concurrency:
+  group: dependabot-rebase
+  cancel-in-progress: true
+
+jobs:
+  rebase:
+    name: Rebase conflicting Dependabot PRs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ask Dependabot to rebase
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # GitHub works out mergeability in the background after a push, so give it a moment.
+          sleep 60
+          gh pr list --repo "$GITHUB_REPOSITORY" --author "app/dependabot" --state open \
+            --json number,mergeable --jq '.[] | select(.mergeable == "CONFLICTING") | .number' |
+          while read -r pr; do
+            echo "PR #$pr conflicts with main; asking Dependabot to rebase it"
+            gh pr comment "$pr" --repo "$GITHUB_REPOSITORY" --body "@dependabot rebase"
+          done

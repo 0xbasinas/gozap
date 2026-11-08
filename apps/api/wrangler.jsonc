@@ -1,0 +1,65 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "electron-desktop-template",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-04",
+  // Better Auth uses AsyncLocalStorage.
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+
+  // Filled in by `pnpm setup:cloud` when the site has its own domain: [{ "pattern": "app.example.com", "custom_domain": true }]
+  "routes": [],
+
+  // The Worker serves the built web app and the API from one origin, so the sign-in cookie is
+  // first-party and there is no CORS. Only /api/* runs Worker code; static files are free and unmetered.
+  "assets": {
+    "directory": "../web/dist",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "electron-desktop-template",
+      // Replace with the id printed by `wrangler d1 create electron-desktop-template`.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "drizzle"
+    }
+  ],
+
+  "vars": {
+    // The public address of the site (and of the API: same origin). Change it to your domain.
+    "BETTER_AUTH_URL": "http://localhost:8787",
+    // Origins besides the site that may call the API. The desktop app sends its deep-link scheme as its origin.
+    "TRUSTED_ORIGINS": "electron-desktop-template:/",
+    // The product name shown in sign-in emails and on passkey prompts. `pnpm setup:cloud` and `pnpm rename` set it.
+    "APP_NAME": "Electron Desktop Template",
+    // Sender address. The domain must be verified in Resend.
+    "EMAIL_FROM": "Electron Desktop Template <login@example.com>"
+  },
+  // Secrets (set with `wrangler secret put`): BETTER_AUTH_SECRET, RESEND_API_KEY.
+
+  // Pull request previews (.github/workflows/preview.yml). A Preview is a separate copy of this Worker, so it needs
+  // its own settings: it does NOT get the production variables, database or secrets.
+  "previews": {
+    // PREVIEW=true makes the Worker take its address from the request (src/preview.ts), because every Preview has
+    // its own URL. Without RESEND_API_KEY, sign-in links are printed to the Worker log instead of emailed.
+    "vars": {
+      "PREVIEW": "true",
+      "APP_NAME": "Electron Desktop Template",
+      "BETTER_AUTH_URL": "http://localhost:8787",
+      "TRUSTED_ORIGINS": "",
+      "EMAIL_FROM": "Preview <preview@example.com>"
+    },
+    // One staging database shared by all Previews (never production data). `pnpm setup:cloud` creates it and fills
+    // in the id; wrangler.preview-migrations.jsonc must carry the same one.
+    "d1_databases": [
+      {
+        "binding": "DB",
+        "database_name": "electron-desktop-template-preview",
+        "database_id": "00000000-0000-0000-0000-000000000001"
+      }
+    ]
+  }
+}

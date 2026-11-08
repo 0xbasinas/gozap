@@ -1,0 +1,11 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import '@repo/ui/theme.css';
+
+/* Custom title bar: draggable, but its interactive children are not. */
+.app-drag {
+  -webkit-app-region: drag;
+}
+.app-drag :is(button, a, input, select) {
+  -webkit-app-region: no-drag;
+}

@@ -1,0 +1,65 @@
+version: 2
+
+# Safe updates (patch and minor) are grouped and merge themselves once CI is green (see
+# .github/workflows/pr.yml). Major updates come as separate PRs and wait for a person.
+# Security updates ignore the schedule and cooldown, and open as soon as an advisory is published.
+
+updates:
+  # Application dependencies (pnpm is read through the "npm" ecosystem).
+  - package-ecosystem: npm
+    directories: ['/', '/apps/*', '/packages/*']
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Etc/UTC
+    # Wait a few days after a release before proposing it, so yanked or broken versions never reach a PR.
+    cooldown:
+      default-days: 3
+      semver-major-days: 14
+    open-pull-requests-limit: 8
+    labels: [dependencies]
+    assignees: [0xbasinas]
+    commit-message:
+      prefix: 'chore'
+      prefix-development: 'chore'
+      include: scope
+    groups:
+      # Electron ships security fixes often, so it gets its own PR and is never mixed with other updates.
+      electron:
+        patterns:
+          ['electron', 'electron-builder', 'electron-updater', 'electron-vite', 'app-builder-lib']
+        update-types: [minor, patch]
+      # Tooling that only runs in development and CI.
+      dev-tooling:
+        dependency-type: development
+        update-types: [minor, patch]
+        exclude-patterns: ['electron', 'electron-builder', 'electron-vite', 'app-builder-lib']
+      # Everything that ships in the app.
+      production:
+        dependency-type: production
+        update-types: [minor, patch]
+        exclude-patterns: ['electron', 'electron-builder', 'electron-updater', 'electron-vite']
+    ignore:
+      # Node types should track the Node version the app runs on (Electron's), not the newest release.
+      - dependency-name: '@types/node'
+        update-types: [version-update:semver-major]
+
+  # The versions of actions used in .github/workflows.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Etc/UTC
+    cooldown:
+      default-days: 3
+    labels: [dependencies, ci]
+    assignees: [0xbasinas]
+    commit-message:
+      prefix: 'ci'
+    groups:
+      actions:
+        patterns: ['*']
+        update-types: [minor, patch]

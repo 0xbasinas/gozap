@@ -1,0 +1,78 @@
+appId: com.0xbasinas.electron-desktop-template
+productName: Electron Desktop Template
+directories:
+  buildResources: build
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!scripts/*'
+  - '!tests/**'
+  - '!dist-update/**'
+  - '!build/icon-source.svg'
+  - '!electron.vite.config.{js,ts,mjs,cjs}'
+  - '!{vitest.config.ts,playwright.config.ts,commitlint.config.mjs,.husky,docs,bundle-budget.json,components.json,.github,.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
+  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+protocols:
+  - name: App deep link
+    schemes:
+      - electron-desktop-template
+fileAssociations:
+  - ext: tpl
+    name: Template file
+    role: Editor
+extraResources:
+  # Release notes shown in the "what's new" screen. The release workflow overwrites this file.
+  - from: build/release-notes.md
+    to: release-notes.md
+# Electron fuses: switches baked into the executable (set before signing) that turn off features an attacker
+# could abuse. Kept in sync with scripts/lib/fuses.mjs, which CI uses to check the packaged app.
+electronFuses:
+  runAsNode: false # ELECTRON_RUN_AS_NODE would let anyone run the app as a plain Node.js
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  # Playwright needs the inspector flags, so `pnpm build:unpack` and the update test turn this on for test builds.
+  enableNodeCliInspectArguments: false
+  # Refuse to start if app.asar was modified, and only ever load code from it.
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  loadBrowserProcessSpecificV8Snapshot: false
+  # The renderer is served from our own app:// scheme, so file:// pages need no extra privileges.
+  grantFileProtocolExtraPrivileges: false
+asarUnpack:
+  - 'resources/**'
+win:
+  executableName: electron-desktop-template
+nsis:
+  artifactName: ${name}-${version}-setup.${ext}
+  shortcutName: ${productName}
+  uninstallDisplayName: ${productName}
+  createDesktopShortcut: always
+mac:
+  target:
+    - dmg
+    - zip
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    - NSCameraUsageDescription: Application requests access to the device's camera.
+    - NSMicrophoneUsageDescription: Application requests access to the device's microphone.
+    - NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
+    - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
+  notarize: false
+dmg:
+  artifactName: ${name}-${version}.${ext}
+linux:
+  executableName: electron-desktop-template
+  target:
+    - AppImage
+    - deb
+  maintainer: 0xbasinas
+  category: Utility
+appImage:
+  artifactName: ${name}-${version}.${ext}
+npmRebuild: false
+publish:
+  provider: github
+  owner: 0xbasinas
+  repo: electron-desktop-template
+  releaseType: release

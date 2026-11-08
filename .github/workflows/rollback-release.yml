@@ -1,0 +1,84 @@
+name: Rollback release
+# Pull a bad release so nobody new gets it, and make the previous release the one people are offered.
+#
+# What this does:
+#   1. Sets the bad release's rollout to 0% (so installs that have not updated yet are not offered it).
+#   2. Turns the bad release into a draft, which hides it from the updater and the download page.
+#   3. Marks the previous release of the same kind (stable or pre-release) as the latest one.
+#
+# What it cannot do: installs that already updated stay on the bad version, because updaters never
+# downgrade. Fix those by shipping a new, higher version (revert the change in a PR and merge it).
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The bad release, for example v0.1.42
+        type: string
+        required: true
+      previous_tag:
+        description: Release to promote instead (empty = the newest earlier release of the same kind)
+        type: string
+        required: false
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  rollback:
+    name: Roll back ${{ inputs.tag }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      BAD: ${{ inputs.tag }}
+      PREVIOUS: ${{ inputs.previous_tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Find the release to promote
+        id: pick
+        run: |
+          gh release view "$BAD" --repo "$GITHUB_REPOSITORY" --json isPrerelease,createdAt > bad.json
+          kind=$(jq -r .isPrerelease bad.json)
+          created=$(jq -r .createdAt bad.json)
+          if [ -z "$PREVIOUS" ]; then
+            PREVIOUS=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 50 --json tagName,isPrerelease,isDraft,createdAt \
+              | jq -r --arg bad "$BAD" --arg created "$created" --argjson kind "$kind" \
+                '[.[] | select(.tagName != $bad and .isDraft == false and .isPrerelease == $kind and .createdAt < $created)] | sort_by(.createdAt) | last | .tagName // empty')
+          fi
+          if [ -z "$PREVIOUS" ]; then
+            echo "::error::No earlier release found to promote. Pass previous_tag, or publish a fixed release."
+            exit 1
+          fi
+          echo "previous=$PREVIOUS" >> "$GITHUB_OUTPUT"
+
+      - name: Stop offering the bad release
+        run: |
+          mkdir bad
+          gh release download "$BAD" --repo "$GITHUB_REPOSITORY" --dir bad --pattern '*.yml'
+          node apps/desktop/scripts/set-rollout.mjs 0 bad/*.yml
+          gh release upload "$BAD" bad/*.yml --clobber --repo "$GITHUB_REPOSITORY"
+          gh release edit "$BAD" --repo "$GITHUB_REPOSITORY" --draft
+
+      - name: Promote the previous release
+        env:
+          PREV: ${{ steps.pick.outputs.previous }}
+        run: |
+          mkdir prev
+          gh release download "$PREV" --repo "$GITHUB_REPOSITORY" --dir prev --pattern '*.yml'
+          node apps/desktop/scripts/set-rollout.mjs 100 prev/*.yml
+          gh release upload "$PREV" prev/*.yml --clobber --repo "$GITHUB_REPOSITORY"
+          if [ "$(gh release view "$PREV" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease)" = "false" ]; then
+            gh release edit "$PREV" --repo "$GITHUB_REPOSITORY" --latest
+          fi
+
+      - name: Open an issue so the follow-up is not forgotten
+        env:
+          PREV: ${{ steps.pick.outputs.previous }}
+        run: |
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "Release $BAD was rolled back" \
+            --body "$BAD is withdrawn (draft, 0% rollout) and $PREV is the release being offered. Installs that already updated to $BAD stay on it until a higher version ships: revert the bad change in a pull request and merge it. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"

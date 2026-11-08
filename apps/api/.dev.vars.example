@@ -1,0 +1,6 @@
+# Copy to .dev.vars (git-ignored) for `pnpm dev`. Deployed secrets are set with `wrangler secret put`.
+BETTER_AUTH_SECRET=change-me-to-a-long-random-string
+# Leave RESEND_API_KEY out in development: sign-in links are then printed in the terminal instead of emailed.
+# RESEND_API_KEY=re_xxxxxxxx
+# Optional: report errors to Sentry (leave out in development).
+# SENTRY_DSN=https://key@o0.ingest.sentry.io/0

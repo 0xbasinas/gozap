@@ -1,0 +1,40 @@
+name: Set release rollout
+# Staged rollouts: change how many users are offered a release.
+#   10   -> only about 10% of installs see the update
+#   100  -> everyone
+#   0    -> pause: nobody new gets it (people who already updated keep it)
+# Works by editing stagingPercentage in the update manifests (latest*.yml, beta*.yml) on the release.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag, for example v0.1.42
+        type: string
+        required: true
+      percentage:
+        description: Percent of users who should get it (0-100)
+        type: number
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  rollout:
+    name: Set rollout
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Update the manifests
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+          PERCENT: ${{ inputs.percentage }}
+        run: |
+          mkdir manifests
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir manifests --pattern '*.yml'
+          node apps/desktop/scripts/set-rollout.mjs "$PERCENT" manifests/*.yml
+          gh release upload "$TAG" manifests/*.yml --clobber --repo "$GITHUB_REPOSITORY"

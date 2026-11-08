@@ -1,0 +1,181 @@
+name: Publish (shared steps)
+# Reusable pipeline behind "Publish stable release" and "Publish beta pre-release".
+# Not run directly: it is called with channel = stable | beta.
+on:
+  workflow_call:
+    inputs:
+      channel:
+        description: stable or beta
+        type: string
+        required: true
+      rollout:
+        description: Percent of users who get this release at first (100 = everyone)
+        type: number
+        default: 100
+
+permissions:
+  contents: write
+  id-token: write # build provenance (OIDC)
+  attestations: write
+
+jobs:
+  version:
+    name: Work out the version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      sha: ${{ steps.v.outputs.sha }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: v
+        env:
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          base=$(node -p "require('./apps/desktop/package.json').version.split('.').slice(0,2).join('.')")
+          count=$(git rev-list --count HEAD)
+          version="$base.$count"
+          prerelease=false
+          if [ "$CHANNEL" = "beta" ]; then
+            version="$version-beta"
+            prerelease=true
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+      # Tag the exact commit that was pushed, so the release never points at a different branch tip.
+      - name: Tag this commit
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null 2>&1; then
+            echo "Tag v$VERSION already exists"
+          else
+            git tag "v$VERSION" "$GITHUB_SHA"
+            git push origin "v$VERSION"
+          fi
+      # The release notes are built into the app, so people see them in the "what's new" screen.
+      - name: Write release notes for the app
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          git fetch --tags --force
+          mkdir -p apps/desktop/build
+          node apps/desktop/scripts/release-notes.mjs "v$VERSION" "$CHANNEL" > apps/desktop/build/release-notes.md
+          cat apps/desktop/build/release-notes.md
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-notes
+          path: apps/desktop/build/release-notes.md
+
+  build:
+    name: Build and publish (${{ matrix.os }})
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            script: build:win
+            artifacts: |
+              apps/desktop/dist/*.exe
+          - os: macos-latest
+            script: build:mac
+            artifacts: |
+              apps/desktop/dist/*.dmg
+              apps/desktop/dist/*.zip
+          - os: ubuntu-latest
+            script: build:linux
+            artifacts: |
+              apps/desktop/dist/*.AppImage
+              apps/desktop/dist/*.deb
+    runs-on: ${{ matrix.os }}
+    env:
+      HUSKY: 0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-notes
+          path: apps/desktop/build
+      - name: Set version
+        shell: bash
+        working-directory: apps/desktop
+        run: npm pkg set version=${{ needs.version.outputs.version }}
+      - name: Publish as pre-release
+        if: needs.version.outputs.prerelease == 'true'
+        shell: bash
+        run: |
+          sed -i.bak 's/releaseType: release/releaseType: prerelease/' apps/desktop/electron-builder.yml
+      - run: pnpm run ${{ matrix.script }} --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Optional: with a Sentry DSN, users can opt in to anonymous crash reports (Settings).
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          # Optional: the address of the deployed API (for example https://app.example.com). With it, the desktop
+          # app shows an Account section and can sign in through the browser. Set it as a repository variable.
+          API_URL: ${{ vars.API_URL }}
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ matrix.artifacts }}
+
+  finalize:
+    name: Release notes and checksums
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - run: git fetch --tags --force
+      # Staged rollout: only a share of users is offered the update until someone raises it
+      # (Actions > "Set release rollout").
+      - name: Limit the rollout
+        if: inputs.rollout < 100
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.version.outputs.version }}
+          ROLLOUT: ${{ inputs.rollout }}
+        run: |
+          tag="v$VERSION"
+          mkdir manifests
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir manifests --pattern '*.yml'
+          node apps/desktop/scripts/set-rollout.mjs "$ROLLOUT" manifests/*.yml
+          gh release upload "$tag" manifests/*.yml --clobber --repo "$GITHUB_REPOSITORY"
+      - name: Title, notes and checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.version.outputs.version }}
+          SHA: ${{ needs.version.outputs.sha }}
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          tag="v$VERSION"
+
+          node apps/desktop/scripts/release-notes.mjs "$tag" "$CHANNEL" > notes.md
+          {
+            echo "---"
+            echo "Channel: **$CHANNEL**. Built from commit \`$SHA\`."
+            echo
+            echo "Verify a download: \`sha256sum -c SHA256SUMS.txt --ignore-missing\`, or \`gh attestation verify <file> --repo $GITHUB_REPOSITORY\`."
+          } >> notes.md
+
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" \
+            --title "v$VERSION ($SHA)" \
+            --notes-file notes.md
+
+          mkdir assets
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir assets \
+            --pattern '*.exe' --pattern '*.dmg' --pattern '*.zip' --pattern '*.AppImage' --pattern '*.deb'
+          (cd assets && sha256sum * > ../SHA256SUMS.txt)
+          cat SHA256SUMS.txt
+          gh release upload "$tag" SHA256SUMS.txt --clobber --repo "$GITHUB_REPOSITORY"
