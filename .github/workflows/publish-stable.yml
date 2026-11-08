@@ -18,6 +18,9 @@ on:
       - '!packages/**/*.test.tsx'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
+  # Start a release by hand (Actions > Publish stable release > Run workflow), for example when a merge made with
+  # GITHUB_TOKEN did not trigger this workflow.
+  workflow_dispatch:
 
 permissions:
   contents: write
