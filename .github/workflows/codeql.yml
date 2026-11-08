@@ -27,8 +27,44 @@ jobs:
         language: [javascript-typescript, actions]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The action downloads its CodeQL bundle from github.com/.../releases/download, which often answers 504. The same
+      # official release asset downloads fine through the API (`gh release download`), so fetch it that way, retry a few
+      # times, check it against the sha256 GitHub publishes for the asset, and hand it to the action as a local file.
+      # The version is the one the pinned action wants (lib/defaults.json at its commit), so a Dependabot bump of the
+      # action is followed automatically. If anything here fails, `tools` stays empty and the action downloads as usual.
+      - name: Download the CodeQL bundle (with retries)
+        id: bundle
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LANGUAGE: ${{ matrix.language }}
+        run: |
+          sha=$(grep -oE 'codeql-action/init@[0-9a-f]{40}' .github/workflows/codeql.yml | head -1 | cut -d@ -f2)
+          tag=$(gh api "repos/github/codeql-action/contents/lib/defaults.json?ref=$sha" -H 'Accept: application/vnd.github.raw' | jq -r .bundleVersion)
+          case "$LANGUAGE" in
+            javascript-typescript) asset=codeql-bundle-javascript-linux64.tar.zst ;;
+            actions) asset=codeql-bundle-actions-linux64.tar.zst ;;
+            *) echo "No small bundle for $LANGUAGE; the action will download it."; exit 0 ;;
+          esac
+          want=$(gh api "repos/github/codeql-action/releases/tags/$tag" -q ".assets[] | select(.name==\"$asset\") | .digest")
+          for attempt in 1 2 3 4 5; do
+            if gh release download "$tag" -R github/codeql-action -p "$asset" -D "$RUNNER_TEMP" --clobber; then
+              got="sha256:$(sha256sum "$RUNNER_TEMP/$asset" | cut -d' ' -f1)"
+              if [ -n "$want" ] && [ "$got" = "$want" ]; then
+                echo "path=$RUNNER_TEMP/$asset" >> "$GITHUB_OUTPUT"
+                echo "Downloaded $tag/$asset ($got)"
+                exit 0
+              fi
+              echo "::warning::Checksum mismatch for $asset (wanted '$want', got '$got'); not using it."
+              rm -f "$RUNNER_TEMP/$asset"
+              exit 0
+            fi
+            echo "Download attempt $attempt failed."; sleep $((attempt * 10))
+          done
+          echo "::warning::Could not download the CodeQL bundle through the API; the action will try itself."
       - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
+          tools: ${{ steps.bundle.outputs.path }}
           languages: ${{ matrix.language }}
           build-mode: none
           queries: security-extended

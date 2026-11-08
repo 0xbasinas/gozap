@@ -95,6 +95,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       HUSKY: 0
+      # GitHub's release downloads time out (504) often enough to fail a release, so fetch Electron and electron-builder's
+      # installer tools from the npmmirror copies. Electron is checked against the checksums.json bundled in the electron
+      # package, and electron-builder checks its tools against checksums built into it, so a bad file is rejected.
+      ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+      ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
