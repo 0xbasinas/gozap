@@ -1,7 +1,9 @@
+import { soloTeamsDeletion } from './teams'
 import { deletionDate } from '@repo/shared'
 import { and, eq, lte } from 'drizzle-orm'
 import type { Db } from './db'
 import { schema } from './db'
+import { closeRequests, openRequest } from './dataRequests'
 import type { EmailMessage } from './email'
 
 // Deleting an account is a request first: the account stays for the cooling-off period (see DELETION_COOLING_OFF_DAYS),
@@ -49,6 +51,7 @@ export async function requestDeletion(
     scheduledFor,
     cancelTokenHash: await hashToken(token)
   })
+  await openRequest(db, userId, 'deletion', 'processing', now)
   return { scheduledFor, token }
 }
 
@@ -63,6 +66,7 @@ export async function scheduledDeletion(db: Db, userId: string): Promise<number 
 
 export async function cancelDeletion(db: Db, userId: string): Promise<void> {
   await db.delete(schema.accountDeletion).where(eq(schema.accountDeletion.userId, userId))
+  await closeRequests(db, userId, 'deletion', 'cancelled', Date.now())
 }
 
 /** Cancel with the token from the email. Returns false when the token matches nothing (wrong, used, or already cancelled). */
@@ -71,6 +75,8 @@ export async function cancelDeletionWithToken(db: Db, token: string): Promise<bo
     .delete(schema.accountDeletion)
     .where(eq(schema.accountDeletion.cancelTokenHash, await hashToken(token)))
     .returning({ userId: schema.accountDeletion.userId })
+  for (const { userId } of removed)
+    await closeRequests(db, userId, 'deletion', 'cancelled', Date.now())
   return removed.length > 0
 }
 
@@ -79,7 +85,13 @@ export async function cancelDeletionWithToken(db: Db, token: string): Promise<bo
  * Sessions, passkeys, preferences, feedback and nicknames go with the user (ON DELETE CASCADE); unused sign-in links are removed too.
  * Returns how many accounts were removed.
  */
-export async function deleteDueAccounts(db: Db, now: number, limit = 50): Promise<number> {
+export async function deleteDueAccounts(
+  db: Db,
+  now: number,
+  limit = 50,
+  /** Called with the address after the account is gone, to tell the person it happened (the address is not kept). */
+  notify?: (email: string) => Promise<void>
+): Promise<number> {
   const due = await db
     .select({ userId: schema.accountDeletion.userId, email: schema.user.email })
     .from(schema.accountDeletion)
@@ -89,8 +101,16 @@ export async function deleteDueAccounts(db: Db, now: number, limit = 50): Promis
   for (const { userId, email } of due) {
     await db.batch([
       db.delete(schema.verification).where(eq(schema.verification.identifier, email)),
+      // Teams only this person belongs to would be left with nobody to reach them.
+      soloTeamsDeletion(db, userId),
+      // API keys point at the person without a foreign key, so they are removed here.
+      db.delete(schema.apikey).where(eq(schema.apikey.referenceId, userId)),
       db.delete(schema.user).where(and(eq(schema.user.id, userId)))
     ])
+    await closeRequests(db, userId, 'deletion', 'done', now)
+    await notify?.(email).catch((error: unknown) =>
+      console.error('Could not send the deleted notice', error)
+    )
   }
   return due.length
 }
@@ -130,6 +150,23 @@ export function deletionEmail(
 <p>Someone asked to delete your ${escape(appName)} account. Until ${escape(when)} nothing is removed, and you can change your mind.</p>
 <p><a href="${escape(cancelUrl)}" style="display:inline-block;padding:10px 18px;background:#18181b;color:#fff;border-radius:8px;text-decoration:none">Keep my account</a></p>
 <p style="font-size:14px;color:#52525b">On ${escape(when)} your account, devices, settings and feedback are deleted for good. If you did not ask for this, use the button, then sign out everywhere from your account page.</p>
+</body></html>`
+  }
+}
+
+/** The last email: the account is gone, and nothing is kept. */
+export function accountDeletedEmail(appName: string): Omit<EmailMessage, 'to'> {
+  return {
+    subject: `Your ${appName} account was deleted`,
+    text: [
+      `Your ${appName} account, devices, settings and feedback were deleted, as you asked.`,
+      '',
+      'This is the last email we send to this address.'
+    ].join('\n'),
+    html: `<!doctype html><html lang="en"><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;line-height:1.5;color:#18181b">
+<h1 style="font-size:20px">Your account was deleted</h1>
+<p>Your ${appName.replace(/[<>&"]/g, '')} account, devices, settings and feedback were deleted, as you asked.</p>
+<p style="font-size:14px;color:#52525b">This is the last email we send to this address.</p>
 </body></html>`
   }
 }

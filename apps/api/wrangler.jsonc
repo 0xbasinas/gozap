@@ -39,7 +39,10 @@
     // The product name shown in sign-in emails and on passkey prompts. `pnpm setup:cloud` and `pnpm rename` set it.
     "APP_NAME": "GoZap",
     // Sender address. The domain must be verified in Resend.
-    "EMAIL_FROM": "GoZap <login@gozap.xyz>"
+    "EMAIL_FROM": "GoZap <login@gozap.xyz>",
+    // Forced update: the oldest desktop app version still allowed, like "0.1.42" (empty: no limit). Older apps show a
+    // blocking "update required" screen on their next check. Raise it for a security fix; see docs/releasing.md.
+    "MIN_APP_VERSION": ""
   },
   // Secrets (set with `wrangler secret put`): BETTER_AUTH_SECRET, RESEND_API_KEY.
 

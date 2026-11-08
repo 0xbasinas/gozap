@@ -19,6 +19,7 @@ Package manager is **pnpm** (never npm or yarn). Node 24. Run commands from the 
 | Format / lint / typecheck                | `pnpm format` / `pnpm lint` / `pnpm typecheck`                                         |
 | Unit tests (src, scripts)                | `pnpm test` (and `pnpm test:scripts` for the root `scripts/` folder)                   |
 | Fill the local database with fake people | `pnpm seed:dev [--users N]` (local D1 only; never touches the real database)           |
+| Give or remove a staff role              | `pnpm admin:grant <email> [admin                                                       | support]`/`pnpm admin:revoke <email>` (`--remote` for the real database) |
 | Set up website + API accounts            | `pnpm setup:cloud` (interactive; needs the user's own Cloudflare/Resend accounts)      |
 | Update an app from the template          | `pnpm template:update` (apps made from the template only; opens a PR; `--adopt` first) |
 | Check the cloud setup                    | `pnpm cloud:doctor` (read-only; safe to run, never prints secret values)               |
@@ -97,8 +98,8 @@ only third-party runtime modules go in `dependencies` (electron-builder packages
 
 ## Website, API and sign-in
 
-- Never put secrets in `apps/api/wrangler.jsonc` (it only holds `database_id`, `BETTER_AUTH_URL`, `EMAIL_FROM`, `TRUSTED_ORIGINS`, `routes` and the daily cron `triggers`).
-  Secrets (`BETTER_AUTH_SECRET`, `RESEND_API_KEY`) are set in Cloudflare by `pnpm setup:cloud` or `wrangler secret put`.
+- Never put secrets in `apps/api/wrangler.jsonc` (it only holds `database_id`, `BETTER_AUTH_URL`, `EMAIL_FROM`, `TRUSTED_ORIGINS`, `routes`, `MIN_APP_VERSION`, `TURNSTILE_SITE_KEY` and the daily cron `triggers`).
+  Secrets (`BETTER_AUTH_SECRET`, `RESEND_API_KEY`, `TURNSTILE_SECRET_KEY`) are set in Cloudflare by `pnpm setup:cloud` or `wrangler secret put`.
   Do not run `pnpm setup:cloud` for the user: it needs their accounts and keys, so tell them to run it.
   `pnpm cloud:doctor` only reads, so run it when something about sign-in or deploys looks wrong. Pull request previews
   (`.github/workflows/preview.yml`) set `PREVIEW=true`, and the Worker then takes its address from the request: do not read

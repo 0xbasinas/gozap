@@ -63,6 +63,18 @@ random number and only takes the update if that number falls inside the percenta
 Beta releases are always offered to everyone on the beta channel. Set `rollout: 100` in `publish-stable.yml`
 if you don't want staged rollouts. The logic lives in `apps/desktop/scripts/lib/rollout.mjs` and is unit tested.
 
+## Forcing an update (minimum version)
+
+For a security fix you can make older apps stop working until they update. Set `MIN_APP_VERSION` in `apps/api/wrangler.jsonc` (for example
+`"0.1.60"`), merge, and let the web and API deploy. The desktop app asks `GET /api/app-config` at start-up and every six hours
+(`apps/desktop/src/main/minimumVersion.ts`); a version below the minimum gets a blocking "Update required" screen with an update button.
+
+- It **fails open**: if the site cannot be reached, or the value is not a version, nobody is blocked. A typo cannot lock people out.
+- Only packaged apps that were built with an `API_URL` check it; development builds never do.
+- Release the fixed version first and wait for the rollout to reach most people, or the people still on the staged 10% will see an update that is not offered to
+  them yet. Leave the value empty to turn it off again.
+- Pre-release suffixes are ignored (`0.1.60-beta` counts as `0.1.60`).
+
 ## Release dry run
 
 Every pull request builds the real installers on Windows, macOS and Linux (`electron-builder --publish never`) and runs

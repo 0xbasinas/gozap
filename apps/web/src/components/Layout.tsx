@@ -12,8 +12,28 @@ const link = ({ isActive }: { isActive: boolean }): string =>
 
 export function Layout(): JSX.Element {
   const { data: session } = authClient.useSession()
+  const impersonating = Boolean(
+    (session?.session as { impersonatedBy?: string | null } | undefined)?.impersonatedBy
+  )
   return (
     <div className="flex min-h-screen flex-col">
+      {impersonating && (
+        <div
+          role="status"
+          className="flex items-center justify-center gap-3 bg-muted px-4 py-2 text-sm"
+        >
+          You are signed in as {session?.user.email} to help them.
+          <button
+            type="button"
+            className="underline"
+            onClick={() =>
+              void authClient.admin.stopImpersonating().then(() => window.location.assign('/admin'))
+            }
+          >
+            Stop
+          </button>
+        </div>
+      )}
       <header className="border-b border-border">
         <nav className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
           <NavLink to="/" className="font-semibold" end>
@@ -29,6 +49,18 @@ export function Layout(): JSX.Element {
             <NavLink to="/app" className={link}>
               Open web app
             </NavLink>
+            {['admin', 'support'].includes(
+              (session?.user as { role?: string | null } | undefined)?.role ?? ''
+            ) && (
+              <NavLink to="/admin" className={link}>
+                Admin
+              </NavLink>
+            )}
+            {session && (
+              <NavLink to="/teams" className={link}>
+                Teams
+              </NavLink>
+            )}
             {session && (
               <NavLink to="/account" className={link}>
                 Account
@@ -61,6 +93,10 @@ export function Layout(): JSX.Element {
         ·{' '}
         <Link className="underline" to="/sub-processors">
           Sub-processors
+        </Link>{' '}
+        ·{' '}
+        <Link className="underline" to="/status">
+          Version status
         </Link>{' '}
         ·{' '}
         <a className="underline" href="/.well-known/security.txt">

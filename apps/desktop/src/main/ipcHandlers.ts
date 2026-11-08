@@ -13,6 +13,8 @@ import { listDevices, renameDevice, signOutDevice } from './devices'
 import { sendFeedback } from './feedback'
 import { collectDiagnostics } from './diagnostics'
 import { logFilePath, revealLogs } from './logger'
+import { getFlags } from './flags'
+import { isUpdateRequired } from './minimumVersion'
 import { getSyncStatus, syncPreferences } from './preferencesSync'
 import { handle } from './secureIpc'
 import { getSettings, updateSettings } from './settings'
@@ -49,6 +51,8 @@ export function registerIpcHandlers(): void {
   handle(IPC.devicesSignOut, (_event, id) => signOutDevice(parseDeviceId(id)))
   handle(IPC.feedbackSend, (_event, request) => sendFeedback(parseFeedbackRequest(request)))
   handle(IPC.syncStatus, () => getSyncStatus())
+  handle(IPC.updateRequiredGet, () => isUpdateRequired())
+  handle(IPC.flagsGet, () => getFlags())
   handle(IPC.syncRetry, () => syncPreferences())
 
   handle(IPC.accountGet, () => getAccount())
