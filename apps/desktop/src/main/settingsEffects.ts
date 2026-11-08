@@ -2,17 +2,23 @@ import { app, BrowserWindow, nativeTheme } from 'electron'
 import { IPC } from '../shared/ipc'
 import { getSettings, onSettingsChanged } from './settings'
 import { refreshTrayMenu } from './tray'
+import { syncWindowColors } from './windowChrome'
 import { checkForUpdates } from './updater'
 
 /** Everything that has to happen when a setting changes, wherever the change came from. */
 export function setupSettingsEffects(): void {
   nativeTheme.themeSource = getSettings().theme
   onSettingsChanged((next, previous) => {
+    // Theme first, so the windows are already coloured and the system answer is current when the pages hear about it.
+    if (next.theme !== previous.theme) {
+      nativeTheme.themeSource = next.theme
+      // Right away, rather than when the system announces the change a moment later.
+      BrowserWindow.getAllWindows().forEach(syncWindowColors)
+    }
     // Keep every open window (main and settings) and the tray in sync.
     BrowserWindow.getAllWindows().forEach((w) => w.webContents.send(IPC.settingsChanged, next))
     refreshTrayMenu()
 
-    if (next.theme !== previous.theme) nativeTheme.themeSource = next.theme
     if (next.updateChannel !== previous.updateChannel) {
       void checkForUpdates()
     }

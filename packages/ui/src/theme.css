@@ -145,6 +145,14 @@
     @apply bg-background text-foreground antialiased;
   }
 
+  /* While the theme switches (see switchThemeInstantly) nothing animates, so every colour changes in the same frame. */
+  html.theme-switching,
+  html.theme-switching *,
+  html.theme-switching *::before,
+  html.theme-switching *::after {
+    transition: none !important;
+  }
+
   /* Thin, quiet scrollbars that follow the theme: the thumb is a faint tint of the text colour, the track is invisible. */
   * {
     scrollbar-width: thin;

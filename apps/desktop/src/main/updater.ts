@@ -4,6 +4,7 @@ import { autoUpdater } from 'electron-updater'
 import { IPC, type UpdateChannel, type UpdaterEvent } from '../shared/ipc'
 import { logger } from './logger'
 import { handle } from './secureIpc'
+import { notify } from './notify'
 import { getSettings } from './settings'
 
 function applyChannel(channel: UpdateChannel): void {
@@ -37,7 +38,13 @@ export function setupAutoUpdater(): void {
   autoUpdater.on('update-available', (info) => send({ type: 'available', version: info.version }))
   autoUpdater.on('update-not-available', () => send({ type: 'not-available' }))
   autoUpdater.on('download-progress', (p) => send({ type: 'progress', percent: p.percent }))
-  autoUpdater.on('update-downloaded', (info) => send({ type: 'downloaded', version: info.version }))
+  autoUpdater.on('update-downloaded', (info) => {
+    send({ type: 'downloaded', version: info.version })
+    notify(
+      'Update ready',
+      `Version ${info.version} will install the next time you restart ${app.name}.`
+    )
+  })
   autoUpdater.on('error', (err) => {
     console.error('[updater]', err)
     send({ type: 'error', message: err.message })

@@ -5,6 +5,7 @@ import {
   type Preferences,
   type PreferencesRecord
 } from '@repo/shared'
+import { switchThemeInstantly } from '@repo/ui'
 import { api } from './api'
 
 // The theme and accent colour follow the person: it is kept in this browser (so it applies at once, even signed out or offline) and,
@@ -37,16 +38,20 @@ export function applyAccent(accent: Preferences['accent']): void {
   document.documentElement.dataset.accent = accent
 }
 
-export function applyTheme(theme: Preferences['theme']): void {
+export function applyTheme(theme: Preferences['theme'], animated = false): void {
   const dark = theme === 'dark' || (theme === 'system' && darkQuery()?.matches === true)
-  document.documentElement.classList.toggle('dark', dark)
+  const root = document.documentElement
+  if (root.classList.contains('dark') === dark) return
+  // Every colour changes in the same frame (the very first paint has nothing to animate, so it skips this).
+  if (animated) switchThemeInstantly(() => root.classList.toggle('dark', dark))
+  else root.classList.toggle('dark', dark)
 }
 
 /** Apply the saved theme and accent now, and keep following the OS setting while the theme is "system". */
 export function initTheme(): void {
   applyTheme(readLocal().preferences.theme)
   applyAccent(readLocal().preferences.accent)
-  darkQuery()?.addEventListener('change', () => applyTheme(readLocal().preferences.theme))
+  darkQuery()?.addEventListener('change', () => applyTheme(readLocal().preferences.theme, true))
 }
 
 export const currentTheme = (): Preferences['theme'] => readLocal().preferences.theme
@@ -60,7 +65,7 @@ async function setPreference(patch: Partial<Preferences>, signedIn: boolean): Pr
     updatedAt: Date.now()
   }
   writeLocal(record)
-  applyTheme(record.preferences.theme)
+  applyTheme(record.preferences.theme, true)
   applyAccent(record.preferences.accent)
   if (!signedIn) return false
   try {
@@ -86,7 +91,7 @@ export async function syncTheme(): Promise<Preferences> {
   const { winner, push } = reconcile(local, remote)
   const saved = push ? await api.preferences.put(winner) : winner
   writeLocal(saved)
-  applyTheme(saved.preferences.theme)
+  applyTheme(saved.preferences.theme, true)
   applyAccent(saved.preferences.accent)
   return saved.preferences
 }

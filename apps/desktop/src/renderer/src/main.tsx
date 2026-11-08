@@ -3,16 +3,26 @@ import './assets/index.css'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { isAccent } from '@repo/shared/accents'
+import { switchThemeInstantly } from '@repo/ui'
 import App from './App'
 import { SettingsWindow } from './components/SettingsWindow'
 
 // Follow the OS light/dark setting (Electron maps it to prefers-color-scheme).
 const darkQuery = window.matchMedia('(prefers-color-scheme: dark)')
-const applyTheme = (): void => {
-  document.documentElement.classList.toggle('dark', darkQuery.matches)
+const setDark = (dark: boolean): void => {
+  const root = document.documentElement
+  if (root.classList.contains('dark') === dark) return
+  switchThemeInstantly(() => root.classList.toggle('dark', dark))
 }
-applyTheme()
+const applyTheme = (): void => setDark(darkQuery.matches)
+// First paint: no transitions to hold back yet.
+document.documentElement.classList.toggle('dark', darkQuery.matches)
 darkQuery.addEventListener('change', applyTheme)
+// The chosen theme is applied the moment the setting changes, not a beat later when the system reports it, so the
+// page and the window recolour in the same frame. (For "system" the media query is the answer.)
+const themeFromSetting = (theme: string): void => {
+  setDark(theme === 'dark' || (theme !== 'light' && darkQuery.matches))
+}
 
 // The accent colour is a setting: put it on <html> now and whenever it changes (from any window, or another device).
 // The last value is remembered in localStorage so the first paint already has it; main's answer then corrects it.
@@ -33,7 +43,10 @@ try {
 }
 document.documentElement.dataset.accent = isAccent(remembered) ? remembered : 'neutral'
 void window.api.getSettings().then((s) => applyAccent(s.accent))
-window.api.onSettingsChanged((s) => applyAccent(s.accent))
+window.api.onSettingsChanged((s) => {
+  applyAccent(s.accent)
+  themeFromSetting(s.theme)
+})
 
 // One bundle, two windows: the settings window loads index.html#settings.
 const isSettingsWindow = window.location.hash === '#settings'

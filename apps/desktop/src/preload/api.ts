@@ -2,11 +2,16 @@ import { ipcRenderer, type IpcRendererEvent } from 'electron'
 import {
   IPC,
   type Account,
+  type ActionResult,
   type AppInfo,
+  type DevicesResult,
+  type FeedbackRequest,
+  type FeedbackResult,
   type Settings,
   type UpdaterEvent,
   type WhatsNew
 } from '../shared/ipc'
+import type { SyncStatus } from '../shared/syncStatus'
 
 /** Subscribe to a main -> renderer channel. Returns an unsubscribe function. */
 const subscribe = <T>(channel: string, callback: (payload: T) => void): (() => void) => {
@@ -39,11 +44,27 @@ export const api = {
   openSettings: (): Promise<void> => ipcRenderer.invoke(IPC.settingsOpenWindow),
   getAppInfo: (): Promise<AppInfo> => ipcRenderer.invoke(IPC.appInfo),
   openLogs: (): Promise<void> => ipcRenderer.invoke(IPC.appOpenLogs),
+  /** A text report (versions, GPU, settings, log tail) the user can copy into a bug report. */
+  getDiagnostics: (): Promise<string> => ipcRenderer.invoke(IPC.appDiagnostics),
 
   // Account (sign in through the system browser)
   getAccount: (): Promise<Account> => ipcRenderer.invoke(IPC.accountGet),
   signIn: (): Promise<void> => ipcRenderer.invoke(IPC.accountSignIn),
   signOut: (): Promise<void> => ipcRenderer.invoke(IPC.accountSignOut),
+
+  // Where the person is signed in (main calls the API as them)
+  listDevices: (): Promise<DevicesResult> => ipcRenderer.invoke(IPC.devicesList),
+  renameDevice: (id: string, nickname: string | null): Promise<ActionResult> =>
+    ipcRenderer.invoke(IPC.devicesRename, id, nickname),
+  signOutDevice: (id: string): Promise<ActionResult> => ipcRenderer.invoke(IPC.devicesSignOut, id),
+
+  // Feedback (sent by main, as the signed-in person)
+  sendFeedback: (request: FeedbackRequest): Promise<FeedbackResult> =>
+    ipcRenderer.invoke(IPC.feedbackSend, request),
+
+  // Account sync
+  getSyncStatus: (): Promise<SyncStatus> => ipcRenderer.invoke(IPC.syncStatus),
+  retrySync: (): Promise<void> => ipcRenderer.invoke(IPC.syncRetry),
 
   // First run and "what's new"
   getWhatsNew: (force = false): Promise<WhatsNew | undefined> =>
@@ -53,6 +74,8 @@ export const api = {
   // Events from main
   onUpdaterEvent: (cb: (event: UpdaterEvent) => void): (() => void) =>
     subscribe(IPC.updaterEvent, cb),
+  onSyncStatusChanged: (cb: (status: SyncStatus) => void): (() => void) =>
+    subscribe(IPC.syncChanged, cb),
   onAccountChanged: (cb: (account: Account) => void): (() => void) =>
     subscribe(IPC.accountChanged, cb),
   onSettingsChanged: (cb: (settings: Settings) => void): (() => void) =>

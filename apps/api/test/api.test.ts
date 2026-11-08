@@ -2,6 +2,8 @@ import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test'
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import { createApp } from '../src/app'
+import { createDb } from '../src/db'
+import { deleteDueAccounts } from '../src/deletion'
 import worker from '../src/index'
 import type { Bindings } from '../src/env'
 import type { EmailMessage } from '../src/email'
@@ -352,7 +354,7 @@ describe('account', () => {
     expect((await s.call('/api/account', { headers: { cookie } })).status).toBe(200)
   })
 
-  it('deletes the account and everything held about it, and blocks cross-site requests', async () => {
+  it('removes the account and everything held about it once the cooling-off period is over', async () => {
     const s = setup()
     const cookie = await signIn(s, 'gone@example.com')
     await bindings.DB.prepare(
@@ -374,11 +376,18 @@ describe('account', () => {
     })
     expect(cross.status).toBe(403)
 
-    const deleted = await s.call(
+    const asked = await s.call(
       '/api/account',
       json(cookie, 'DELETE', { confirmEmail: 'gone@example.com' })
     )
-    expect(deleted.status).toBe(204)
+    expect(asked.status).toBe(202)
+    // Nothing is removed yet: the person can still sign in and see the date.
+    expect((await s.call('/api/account', { headers: { cookie } })).status).toBe(200)
+
+    const db = createDb(bindings.DB)
+    expect(await deleteDueAccounts(db, Date.now() + 13 * 86_400_000)).toBe(0)
+    expect((await s.call('/api/account', { headers: { cookie } })).status).toBe(200)
+    expect(await deleteDueAccounts(db, Date.now() + 15 * 86_400_000)).toBe(1)
 
     // The old cookie is dead at once (not after the 5-minute cache), and nothing is left in the database.
     expect((await s.call('/api/account', { headers: { cookie } })).status).toBe(401)
@@ -392,6 +401,83 @@ describe('account', () => {
     expect(await left('session', 'user_id')).toBe(0)
     expect(await left('passkey', 'user_id')).toBe(0)
     expect(await left('preference', 'user_id')).toBe(0)
+    expect(await left('account_deletion', 'user_id')).toBe(0)
+  })
+
+  it('schedules the deletion, tells the person by email, and asking twice changes nothing', async () => {
+    const s = setup()
+    const cookie = await signIn(s, 'plan@example.com')
+    const before = s.sent.length
+    const first = (await (
+      await s.call('/api/account', json(cookie, 'DELETE', { confirmEmail: 'plan@example.com' }))
+    ).json()) as { scheduledFor: string }
+    const days = (Date.parse(first.scheduledFor) - Date.now()) / 86_400_000
+    expect(days).toBeGreaterThan(13.9)
+    expect(days).toBeLessThan(14.1)
+
+    expect(s.sent.length).toBe(before + 1)
+    const mail = s.sent[before]!
+    expect(mail.to).toBe('plan@example.com')
+    expect(mail.text).toMatch(/\/account\/cancel-deletion\?token=\S{20,}/)
+
+    const second = (await (
+      await s.call('/api/account', json(cookie, 'DELETE', { confirmEmail: 'plan@example.com' }))
+    ).json()) as { scheduledFor: string }
+    expect(second.scheduledFor).toBe(first.scheduledFor)
+    expect(s.sent.length).toBe(before + 1)
+
+    const me = (await (await s.call('/api/account', { headers: { cookie } })).json()) as {
+      deletionScheduledFor: string | null
+    }
+    expect(me.deletionScheduledFor).toBe(first.scheduledFor)
+    const exported = (await (
+      await s.call('/api/account/export', { headers: { cookie } })
+    ).json()) as { account: { deletionScheduledFor: string | null } }
+    expect(exported.account.deletionScheduledFor).toBe(first.scheduledFor)
+  })
+
+  it('can be cancelled while signed in', async () => {
+    const s = setup()
+    const cookie = await signIn(s, 'stay1@example.com')
+    await s.call('/api/account', json(cookie, 'DELETE', { confirmEmail: 'stay1@example.com' }))
+    expect((await s.call('/api/account/deletion/cancel', json(cookie, 'POST'))).status).toBe(204)
+    const me = (await (await s.call('/api/account', { headers: { cookie } })).json()) as {
+      deletionScheduledFor: string | null
+    }
+    expect(me.deletionScheduledFor).toBeNull()
+    await deleteDueAccounts(createDb(bindings.DB), Date.now() + 30 * 86_400_000)
+    expect((await s.call('/api/account', { headers: { cookie } })).status).toBe(200)
+  })
+
+  it('can be cancelled from the email link without signing in, once', async () => {
+    const s = setup()
+    const cookie = await signIn(s, 'stay2@example.com')
+    const before = s.sent.length
+    await s.call('/api/account', json(cookie, 'DELETE', { confirmEmail: 'stay2@example.com' }))
+    const token = /token=(\S+)/.exec(s.sent[before]!.text)![1]!
+
+    const post = (t: string): Promise<Response> =>
+      s.call('/api/account/deletion/cancel-with-token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ token: t })
+      })
+    expect((await post('x'.repeat(43))).status).toBe(404)
+    expect((await post('short')).status).toBe(400)
+    expect((await post(token)).status).toBe(204)
+    expect((await post(token)).status).toBe(404)
+    await deleteDueAccounts(createDb(bindings.DB), Date.now() + 30 * 86_400_000)
+    expect((await s.call('/api/account', { headers: { cookie } })).status).toBe(200)
+  })
+
+  it('does not let a cross-site page cancel with a token', async () => {
+    const s = setup()
+    const response = await s.call('/api/account/deletion/cancel-with-token', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: 'https://evil.example' },
+      body: JSON.stringify({ token: 'x'.repeat(43) })
+    })
+    expect(response.status).toBe(403)
   })
 })
 
@@ -627,5 +713,206 @@ describe('bounces and complaints (Resend webhook)', () => {
       .run()
     await requestLink(s, 'old@example.com')
     expect(s.sent).toHaveLength(1)
+  })
+})
+
+describe('feedback', () => {
+  const send = (cookie: string, body: unknown): RequestInit => ({
+    method: 'POST',
+    headers: { cookie, 'content-type': 'application/json' },
+    body: JSON.stringify(body)
+  })
+  const good = { kind: 'bug', message: 'The settings window is blank', source: 'web' }
+
+  it('needs a session', async () => {
+    const s = setup()
+    expect((await s.call('/api/feedback', send('', good))).status).toBe(401)
+  })
+
+  it('stores feedback and includes it in the export, without the diagnostics text', async () => {
+    const s = setup()
+    const cookie = await signIn(s, 'fb1@example.com')
+    const response = await s.call(
+      '/api/feedback',
+      send(cookie, {
+        ...good,
+        source: 'desktop',
+        diagnostics: 'SECRET-REPORT-TEXT',
+        platform: 'win32'
+      })
+    )
+    expect(response.status).toBe(201)
+    expect(((await response.json()) as { id: string }).id).toBeTruthy()
+
+    const text = await (await s.call('/api/account/export', { headers: { cookie } })).text()
+    const data = JSON.parse(text) as { feedback: { message: string; hasDiagnostics: boolean }[] }
+    expect(data.feedback).toHaveLength(1)
+    expect(data.feedback[0]).toMatchObject({ message: good.message, hasDiagnostics: true })
+    expect(text).not.toContain('SECRET-REPORT-TEXT')
+  })
+
+  it('rejects bad input', async () => {
+    const s = setup()
+    const cookie = await signIn(s, 'fb2@example.com')
+    for (const body of [
+      { ...good, message: '' },
+      { ...good, kind: 'rant' },
+      { ...good, message: 'x'.repeat(5000) },
+      { ...good, diagnostics: 'x'.repeat(30000) }
+    ]) {
+      expect((await s.call('/api/feedback', send(cookie, body))).status).toBe(400)
+    }
+  })
+
+  it('limits how much one person can send per hour', async () => {
+    const s = setup()
+    const cookie = await signIn(s, 'fb3@example.com')
+    for (let i = 0; i < 5; i++) {
+      expect((await s.call('/api/feedback', send(cookie, good))).status).toBe(201)
+    }
+    expect((await s.call('/api/feedback', send(cookie, good))).status).toBe(429)
+  })
+
+  it('blocks cross-site writes and keeps one person from seeing another’s feedback', async () => {
+    const s = setup()
+    const a = await signIn(s, 'fb4@example.com')
+    const b = await signIn(s, 'fb5@example.com')
+    const evil = await s.call('/api/feedback', {
+      ...send(a, good),
+      headers: { cookie: a, 'content-type': 'application/json', origin: 'https://evil.example' }
+    })
+    expect(evil.status).toBe(403)
+    await s.call('/api/feedback', send(a, good))
+    const theirs = (await (
+      await s.call('/api/account/export', { headers: { cookie: b } })
+    ).json()) as { feedback: unknown[] }
+    expect(theirs.feedback).toHaveLength(0)
+  })
+
+  it('is deleted with the account', async () => {
+    const s = setup()
+    const cookie = await signIn(s, 'fb6@example.com')
+    await s.call('/api/feedback', send(cookie, good))
+    const me = (await (await s.call('/api/account', { headers: { cookie } })).json()) as {
+      id: string
+    }
+    await s.call('/api/account', {
+      method: 'DELETE',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ confirmEmail: 'fb6@example.com' })
+    })
+    await deleteDueAccounts(createDb(bindings.DB), Date.now() + 15 * 86_400_000)
+    const rows = await bindings.DB.prepare('select count(*) as n from feedback where user_id = ?')
+      .bind(me.id)
+      .first<{ n: number }>()
+    expect(rows?.n).toBe(0)
+  })
+})
+
+describe('devices', () => {
+  type Device = { id: string; label: string; nickname: string | null; current: boolean }
+  const list = async (s: ReturnType<typeof setup>, cookie: string): Promise<Device[]> =>
+    (await (await s.call('/api/devices', { headers: { cookie } })).json()) as Device[]
+  const patch = (cookie: string, nickname: unknown): RequestInit => ({
+    method: 'PATCH',
+    headers: { cookie, 'content-type': 'application/json' },
+    body: JSON.stringify({ nickname })
+  })
+
+  it('needs a session', async () => {
+    const s = setup()
+    expect((await s.call('/api/devices')).status).toBe(401)
+  })
+
+  it('lists every sign-in of the person, with this device first', async () => {
+    const s = setup()
+    const first = await signIn(s, 'dev1@example.com')
+    const second = await signIn(s, 'dev1@example.com')
+    const devices = await list(s, second)
+    expect(devices).toHaveLength(2)
+    expect(devices[0]!.current).toBe(true)
+    expect(devices[1]!.current).toBe(false)
+    expect(JSON.stringify(devices)).not.toMatch(/token/i)
+    // From the other cookie the "current" one is the other entry.
+    const fromFirst = await list(s, first)
+    expect(fromFirst[0]!.id).not.toBe(devices[0]!.id)
+  })
+
+  it('names a device, shows it, and clears it again', async () => {
+    const s = setup()
+    const cookie = await signIn(s, 'dev2@example.com')
+    const [mine] = await list(s, cookie)
+    expect((await s.call(`/api/devices/${mine!.id}`, patch(cookie, '  Work laptop '))).status).toBe(
+      204
+    )
+    expect((await list(s, cookie))[0]!.nickname).toBe('Work laptop')
+    const exported = (await (
+      await s.call('/api/account/export', { headers: { cookie } })
+    ).json()) as {
+      sessions: { nickname: string | null }[]
+    }
+    expect(exported.sessions[0]!.nickname).toBe('Work laptop')
+    expect((await s.call(`/api/devices/${mine!.id}`, patch(cookie, null))).status).toBe(204)
+    expect((await list(s, cookie))[0]!.nickname).toBeNull()
+  })
+
+  it('rejects a name that is too long', async () => {
+    const s = setup()
+    const cookie = await signIn(s, 'dev3@example.com')
+    const [mine] = await list(s, cookie)
+    expect((await s.call(`/api/devices/${mine!.id}`, patch(cookie, 'x'.repeat(41)))).status).toBe(
+      400
+    )
+  })
+
+  it('signs out another device at once, but not the one in use', async () => {
+    const s = setup()
+    const first = await signIn(s, 'dev4@example.com')
+    const second = await signIn(s, 'dev4@example.com')
+    const devices = await list(s, second)
+    const other = devices.find((d) => !d.current)!
+    const me = devices.find((d) => d.current)!
+
+    const self = await s.call(`/api/devices/${me.id}`, {
+      method: 'DELETE',
+      headers: { cookie: second }
+    })
+    expect(self.status).toBe(400)
+
+    const gone = await s.call(`/api/devices/${other.id}`, {
+      method: 'DELETE',
+      headers: { cookie: second }
+    })
+    expect(gone.status).toBe(204)
+    expect((await s.call('/api/account', { headers: { cookie: first } })).status).toBe(401)
+    expect((await s.call('/api/account', { headers: { cookie: second } })).status).toBe(200)
+    expect(await list(s, second)).toHaveLength(1)
+  })
+
+  it("cannot see, rename or sign out another person's devices", async () => {
+    const s = setup()
+    const a = await signIn(s, 'dev5a@example.com')
+    const b = await signIn(s, 'dev5b@example.com')
+    const [theirs] = await list(s, a)
+    expect(await list(s, b)).toHaveLength(1)
+    expect((await list(s, b))[0]!.id).not.toBe(theirs!.id)
+    expect((await s.call(`/api/devices/${theirs!.id}`, patch(b, 'Hacked'))).status).toBe(404)
+    expect(
+      (await s.call(`/api/devices/${theirs!.id}`, { method: 'DELETE', headers: { cookie: b } }))
+        .status
+    ).toBe(404)
+    expect((await s.call('/api/account', { headers: { cookie: a } })).status).toBe(200)
+  })
+
+  it('blocks cross-site writes', async () => {
+    const s = setup()
+    const cookie = await signIn(s, 'dev6@example.com')
+    const [mine] = await list(s, cookie)
+    const response = await s.call(`/api/devices/${mine!.id}`, {
+      method: 'PATCH',
+      headers: { cookie, 'content-type': 'application/json', origin: 'https://evil.example' },
+      body: JSON.stringify({ nickname: 'x' })
+    })
+    expect(response.status).toBe(403)
   })
 })

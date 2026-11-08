@@ -10,6 +10,10 @@ export interface Release {
   tag_name: string
   html_url: string
   assets: ReleaseAsset[]
+  /** Beta builds are published as pre-releases. */
+  prerelease: boolean
+  /** ISO date, or "" if GitHub did not say. */
+  published_at: string
 }
 
 export const PLATFORM_LABEL: Record<Platform, string> = {
@@ -56,7 +60,39 @@ export function parseRelease(data: unknown): Release | null {
     )
       assets.push({ name: x.name, browser_download_url: x.browser_download_url, size: x.size })
   }
-  return { tag_name: r.tag_name, html_url: r.html_url, assets }
+  return {
+    tag_name: r.tag_name,
+    html_url: r.html_url,
+    assets,
+    prerelease: r.prerelease === true,
+    published_at: typeof r.published_at === 'string' ? r.published_at : ''
+  }
+}
+
+/** The file with the SHA-256 of every installer, which releases publish next to them. */
+export function pickChecksums(assets: ReleaseAsset[]): ReleaseAsset | null {
+  return assets.find((a) => a.name === 'SHA256SUMS.txt') ?? null
+}
+
+/** "84.2 MB" style size for a download button. */
+export function formatSize(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+/** Stable releases or beta ones (pre-releases), newest first as GitHub returns them. */
+export function filterReleases(releases: Release[], channel: 'stable' | 'beta' | 'all'): Release[] {
+  if (channel === 'all') return releases
+  return releases.filter((r) => r.prerelease === (channel === 'beta'))
+}
+
+/** Parses a list of releases, dropping entries with a surprise shape. */
+export function parseReleases(data: unknown): Release[] {
+  if (!Array.isArray(data)) return []
+  return data.flatMap((item) => {
+    const release = parseRelease(item)
+    return release ? [release] : []
+  })
 }
 
 export async function fetchLatestRelease(repo: string, signal?: AbortSignal): Promise<Release> {
@@ -68,4 +104,13 @@ export async function fetchLatestRelease(repo: string, signal?: AbortSignal): Pr
   const release = parseRelease(await res.json())
   if (!release) throw new Error('Unexpected release data')
   return release
+}
+
+export async function fetchReleases(repo: string, signal?: AbortSignal): Promise<Release[]> {
+  const res = await fetch(`https://api.github.com/repos/${repo}/releases?per_page=30`, {
+    headers: { Accept: 'application/vnd.github+json' },
+    signal
+  })
+  if (!res.ok) throw new Error(`GitHub answered ${res.status}`)
+  return parseReleases(await res.json())
 }

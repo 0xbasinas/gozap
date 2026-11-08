@@ -107,6 +107,7 @@ while React starts.
   bar, but the accelerators still work.
 - **Tray** (`tray.ts`): click to show or hide the window; the right-click menu has Show, Check for Updates, the
   _Keep running in the tray when closed_ option (stored as `closeToTray` in the settings file) and Quit.
+  It also has What's New, Show Log File, Copy Diagnostics and (while signed in) Sign Out.
   If the desktop has no tray, creating it fails quietly and the app carries on without one.
 - **Shortcut** (`shortcuts.ts`): `Ctrl/Cmd+Shift+Space` shows or hides the window from anywhere.
   Change `TOGGLE_WINDOW_SHORTCUT` to use another one. If another app already owns it, a warning is logged.
@@ -137,6 +138,20 @@ The Settings window is the same renderer bundle loaded with the `#settings` hash
 channel, tray and launch-at-login options, update check, log file and what's new. Changes go through
 `settings:update`, and `settingsEffects.ts` applies them (tray menu, channel re-check, login item) and
 broadcasts `settings:changed` so every window and the tray stay in sync.
+
+## Diagnostics, notifications, command palette and sync status
+
+- **Diagnostics** (`diagnostics.ts` collects, `shared/diagnostics.ts` formats and is tested): `app:diagnostics` returns a text report
+  (versions, GPU, memory, settings, the end of the log). It holds no account details and shows the home folder as `~`.
+  Settings shows it with a copy button; the tray copies it straight to the clipboard.
+- **Notifications** (`notify.ts`): the `notifications` setting (on by default) lets `notify()` show a native notification, for
+  example when an update has downloaded. Quiet hours are not built yet.
+- **Command palette** (`CommandPalette.tsx`, filter logic in `commandFilter.ts`): `Ctrl/Cmd+K` in the main window. Add an action by
+  adding an entry to the `commands` list in `App.tsx`.
+- **Sync status** (`preferencesSync.ts`, text from `shared/syncStatus.ts`): the account section of Settings says whether the theme
+  and accent are synced, offline or signed out, and offers a retry. Channels: `sync:status`, `sync:retry`, event `sync:changed`.
+- **Theme switch**: the page applies the chosen theme itself the moment the setting changes (`switchThemeInstantly` in `@repo/ui`
+  holds transitions back for that frame), and `syncWindowColors` recolours the window, so there is no flash.
 
 ## Logging
 

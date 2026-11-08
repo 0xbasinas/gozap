@@ -19,8 +19,9 @@ function writeStored(stored: Stored): void {
 }
 
 export function getSettings(): Settings {
-  const { theme, accent, updateChannel, closeToTray, launchAtLogin, crashReports } = readStored()
-  return { theme, accent, updateChannel, closeToTray, launchAtLogin, crashReports }
+  const { theme, accent, updateChannel, closeToTray, launchAtLogin, notifications, crashReports } =
+    readStored()
+  return { theme, accent, updateChannel, closeToTray, launchAtLogin, notifications, crashReports }
 }
 
 type Listener = (next: Settings, previous: Settings) => void

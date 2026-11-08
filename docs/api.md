@@ -87,6 +87,30 @@ which is stored encrypted with the operating system's keychain (Electron `safeSt
   secret) to your deployed address for release builds; in development it defaults to `http://localhost:8787`.
 - The Worker already trusts `<scheme>:/` as an origin (`TRUSTED_ORIGINS` in `wrangler.jsonc`); `pnpm rename` updates it.
 
+## Devices
+
+`GET /api/devices` lists the signed-in person's sessions, one per place they are signed in: a readable label worked out from the
+user agent (`describeDevice` in `packages/shared/src/devices.ts`), an optional nickname, when it was created and last seen, and
+which one is the caller's. `PATCH /api/devices/:id` sets or clears the nickname (up to 40 characters, stored in `session_nickname`,
+which goes with the session or the account), and `DELETE /api/devices/:id` signs that device out. The id is the session's row id,
+never its token, every query is limited to the caller's own sessions, and the caller's own session cannot be deleted this way
+(sign out instead). These routes check the database on every call, so a device you signed out stops working at once; routes that
+use the 5-minute session cookie cache (preferences, feedback) can take up to 5 minutes to notice.
+
+The web app shows this on `/account` ("Your devices") and the desktop app in Settings. A nickname belongs to a session, so signing
+in again on the same device starts without one. Nicknames are listed in the data export.
+
+## Feedback
+
+`POST /api/feedback` stores a message (kind `bug`, `idea` or `other`, up to 4000 characters, plus an optional diagnostics
+report up to 24000) in the `feedback` table. It needs a session, so there is no anonymous spam, and each person can send
+5 per hour (one indexed count; `FEEDBACK_PER_HOUR` in `packages/shared/src/feedback.ts`).
+
+The web app has `/feedback`. The desktop app has a Settings section; its main process sends the message as the signed-in
+person (`apps/desktop/src/main/feedback.ts`) and can attach the diagnostics report. Feedback is deleted with the account
+(`ON DELETE CASCADE`) and listed in the data export, without the diagnostics text. Reading it is for the owner: query the
+table with `wrangler d1 execute` until the admin dashboard exists.
+
 ## Account page, data export and deletion
 
 `/account` on the site (signed-in only) lets a person sign out everywhere, download their data and delete their account.
@@ -95,8 +119,15 @@ The API behind it is `GET /api/account`, `GET /api/account/export` and `DELETE /
 - These routes ask the database for the session instead of trusting the 5-minute cookie cache, so a deleted account or a
   revoked session stops working at once.
 - The export lists the account, the settings and the sign-ins (time, IP, browser) and never any token.
-- Deleting needs the email typed again. It removes the user; sessions, linked accounts, passkeys and settings go with it (`ON DELETE CASCADE`),
-  unused sign-in links are removed, and the response clears the session cookies.
+- Deleting needs the email typed again, and it is a request first: `DELETE /api/account` answers `202 { scheduledFor }` and the account stays for
+  14 days (`DELETION_COOLING_OFF_DAYS` in `packages/shared/src/deletion.ts`). The person gets an email (sent with `waitUntil`) with a link to
+  `/account/cancel-deletion?token=...`. Asking again keeps the first date and sends no second email. `GET /api/account` shows
+  `deletionScheduledFor`, and `POST /api/account/deletion/cancel` (signed in) or `POST /api/account/deletion/cancel-with-token` (no sign-in) keeps the account.
+- The emailed link opens a page with a button; the cancel is a POST, so an email scanner that only opens links cannot cancel by accident.
+  Only a SHA-256 hash of the token is stored (`account_deletion`), and a token works once.
+- A daily cron (`triggers.crons` in `apps/api/wrangler.jsonc`, handled by `scheduled` in `apps/api/src/index.ts`) calls `deleteDueAccounts`,
+  which removes up to 50 due users per run. Sessions, linked accounts, passkeys, settings, feedback and device names go with the user
+  (`ON DELETE CASCADE`) and unused sign-in links are removed. The cron needs no extra setup on Cloudflare's free plan.
 - **When you add your own tables**, give them `userId ... references user.id ON DELETE CASCADE`, and add their rows to the export
   in `app.ts`, so deletion and export stay complete. The tests in `apps/api/test/api.test.ts` ("account") show how to check it.
 
