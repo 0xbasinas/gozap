@@ -4,7 +4,6 @@ import { TitleBar } from '@renderer/components/TitleBar'
 import { WhatsNewDialog } from '@renderer/components/WhatsNewDialog'
 import { useAccount } from '@renderer/hooks/useAccount'
 import { DevicesSection } from '@renderer/components/DevicesSection'
-import { FeedbackSection } from '@renderer/components/FeedbackSection'
 import { useSyncStatus } from '@renderer/hooks/useSyncStatus'
 import { describeSync } from '../../../shared/syncStatus'
 import { useSettings } from '@renderer/hooks/useSettings'
@@ -98,6 +97,24 @@ export function SettingsWindow(): React.JSX.Element {
     void window.api.getAppInfo().then(setInfo)
   }, [])
 
+  const [devicesLoaded, setDevicesLoaded] = useState(false)
+  const onDevicesLoaded = useCallback(() => setDevicesLoaded(true), [])
+
+  // Tell the main process when everything is drawn, so it shows the window then and not half-filled.
+  const loaded =
+    settings !== undefined &&
+    account !== undefined &&
+    info !== undefined &&
+    sync.status !== undefined &&
+    (!account.user || devicesLoaded)
+  useEffect(() => {
+    if (!loaded) return
+    const frame = requestAnimationFrame(() => {
+      document.documentElement.dataset.ready = '1'
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [loaded])
+
   const closeWhatsNew = useCallback(() => setWhatsNew(undefined), [])
   const platform = window.api.platform
   const status = updateText(updater.event, updater.checking)
@@ -157,15 +174,9 @@ export function SettingsWindow(): React.JSX.Element {
           </Section>
         )}
 
-        {account?.available && (
-          <Section title="Send feedback">
-            <FeedbackSection signedIn={account.user !== null} />
-          </Section>
-        )}
-
         {account?.user && (
           <Section title="Your devices">
-            <DevicesSection />
+            <DevicesSection onLoaded={onDevicesLoaded} />
           </Section>
         )}
 

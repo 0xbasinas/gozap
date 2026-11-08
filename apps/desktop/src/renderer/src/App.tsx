@@ -8,7 +8,9 @@ import { TitleBarButton } from '@renderer/components/TitleBarButton'
 import { UpdateBanner } from '@renderer/components/UpdateBanner'
 import { WhatsNewDialog } from '@renderer/components/WhatsNewDialog'
 import { useSettings } from '@renderer/hooks/useSettings'
-import { InfoIcon, RefreshIcon, SettingsIcon } from '@renderer/components/icons'
+import { FeedbackDialog } from '@renderer/components/FeedbackDialog'
+import { useAccount } from '@renderer/hooks/useAccount'
+import { FeedbackIcon, InfoIcon, RefreshIcon, SettingsIcon } from '@renderer/components/icons'
 import { useUpdater } from '@renderer/hooks/useUpdater'
 
 function App(): React.JSX.Element {
@@ -17,6 +19,8 @@ function App(): React.JSX.Element {
   const { settings, update } = useSettings()
   const [whatsNew, setWhatsNew] = useState<WhatsNew>()
   const [opened, setOpened] = useState<string>()
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
+  const { account } = useAccount()
 
   useEffect(() => {
     // First run, or the version changed since last time: show the welcome / release notes.
@@ -96,6 +100,11 @@ function App(): React.JSX.Element {
         >
           <InfoIcon />
         </TitleBarButton>
+        {account?.available && (
+          <TitleBarButton label="Send feedback" onClick={() => setFeedbackOpen(true)}>
+            <FeedbackIcon />
+          </TitleBarButton>
+        )}
         <TitleBarButton label="Settings" onClick={() => window.api.openSettings()}>
           <SettingsIcon />
         </TitleBarButton>
@@ -115,6 +124,9 @@ function App(): React.JSX.Element {
           Electron {electron} · Chromium {chrome} · Node {node}
         </p>
       </main>
+      {feedbackOpen && (
+        <FeedbackDialog signedIn={account?.user != null} onClose={() => setFeedbackOpen(false)} />
+      )}
       {whatsNew && <WhatsNewDialog data={whatsNew} onClose={closeWhatsNew} />}
     </>
   )

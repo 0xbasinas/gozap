@@ -29,21 +29,21 @@ export function WhatsNewDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="whats-new-title"
-        className="flex max-h-full w-full max-w-lg flex-col rounded-xl border bg-card text-card-foreground shadow-lg"
+        className="flex max-h-full w-full max-w-sm flex-col rounded-lg border bg-card text-card-foreground shadow-lg"
       >
-        <div className="border-b p-5">
-          <h2 id="whats-new-title" className="text-lg font-semibold">
+        <div className="border-b px-4 py-3">
+          <h2 id="whats-new-title" className="text-base font-semibold">
             {firstRun ? `Welcome to ${document.title}` : `What's new in ${data.version}`}
           </h2>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             {firstRun ? `Version ${data.version}` : 'Here is what changed since your last version.'}
           </p>
         </div>
-        <div className="overflow-y-auto p-5">
+        <div className="overflow-y-auto px-4 py-3 text-sm [&_h1]:text-sm [&_h2]:text-sm [&_h3]:text-sm">
           <Markdown source={data.notes} />
         </div>
-        <div className="flex justify-end border-t p-4">
-          <Button ref={button} onClick={onClose}>
+        <div className="flex justify-end border-t px-4 py-2.5">
+          <Button ref={button} size="sm" onClick={onClose}>
             {firstRun ? 'Get started' : 'Got it'}
           </Button>
         </div>
