@@ -1,0 +1,5 @@
+{
+  "upstream": "0xbasinas/electron-desktop-template",
+  "base": "7e7fa216229e5d8db7060a1aa8e055410064fca9",
+  "ignore": []
+}
