@@ -2,10 +2,7 @@
 export const GITHUB_REPO = '0xbasinas/gozap'
 export const SITE_NAME = 'Gozap'
 /** The desktop app's deep-link scheme (see PROTOCOL in apps/desktop/src/main/deeplink.ts). `pnpm rename` updates it. */
-<<<<<<< ours
 export const DESKTOP_SCHEME = 'gozap'
-=======
-export const DESKTOP_SCHEME = 'electron-desktop-template'
 
 export interface Subprocessor {
   name: string
@@ -37,4 +34,3 @@ export const SUBPROCESSORS: Subprocessor[] = [
     region: 'United States, through GitHub’s global network.'
   }
 ]
->>>>>>> theirs
