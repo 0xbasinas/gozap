@@ -8,7 +8,7 @@
   "observability": { "enabled": true },
 
   // Filled in by `pnpm setup:cloud` when the site has its own domain: [{ "pattern": "app.example.com", "custom_domain": true }]
-  "routes": [],
+  "routes": [{ "pattern": "app.gozap.xyz", "custom_domain": true }],
 
   // The Worker serves the built web app and the API from one origin, so the sign-in cookie is
   // first-party and there is no CORS. Only /api/* runs Worker code; static files are free and unmetered.
@@ -23,20 +23,20 @@
       "binding": "DB",
       "database_name": "gozap",
       // Replace with the id printed by `wrangler d1 create gozap`.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "87c0df58-dcae-4af2-83a6-10ee34edb692",
       "migrations_dir": "drizzle"
     }
   ],
 
   "vars": {
     // The public address of the site (and of the API: same origin). Change it to your domain.
-    "BETTER_AUTH_URL": "http://localhost:8787",
+    "BETTER_AUTH_URL": "https://app.gozap.xyz",
     // Origins besides the site that may call the API. The desktop app sends its deep-link scheme as its origin.
     "TRUSTED_ORIGINS": "gozap:/",
     // The product name shown in sign-in emails and on passkey prompts. `pnpm setup:cloud` and `pnpm rename` set it.
-    "APP_NAME": "Gozap",
+    "APP_NAME": "GoZap",
     // Sender address. The domain must be verified in Resend.
-    "EMAIL_FROM": "Gozap <login@example.com>"
+    "EMAIL_FROM": "GoZap <login@gozap.xyz>"
   },
   // Secrets (set with `wrangler secret put`): BETTER_AUTH_SECRET, RESEND_API_KEY.
 
@@ -47,7 +47,7 @@
     // its own URL. Without RESEND_API_KEY, sign-in links are printed to the Worker log instead of emailed.
     "vars": {
       "PREVIEW": "true",
-      "APP_NAME": "Gozap",
+      "APP_NAME": "GoZap",
       "BETTER_AUTH_URL": "http://localhost:8787",
       "TRUSTED_ORIGINS": "",
       "EMAIL_FROM": "Preview <preview@example.com>"
@@ -58,7 +58,7 @@
       {
         "binding": "DB",
         "database_name": "gozap-preview",
-        "database_id": "00000000-0000-0000-0000-000000000001"
+        "database_id": "8b51c9c9-6c7c-4790-b6f4-938a3867ec92"
       }
     ]
   }
