@@ -8,11 +8,8 @@ import { TitleBarButton } from '@renderer/components/TitleBarButton'
 import { UpdateBanner } from '@renderer/components/UpdateBanner'
 import { WhatsNewDialog } from '@renderer/components/WhatsNewDialog'
 import { useSettings } from '@renderer/hooks/useSettings'
-<<<<<<< ours
-=======
 import { UpdateRequired } from '@renderer/components/UpdateRequired'
 import { useUpdateRequired } from '@renderer/hooks/useUpdateRequired'
->>>>>>> theirs
 import { FeedbackDialog } from '@renderer/components/FeedbackDialog'
 import { useAccount } from '@renderer/hooks/useAccount'
 import { FeedbackIcon, InfoIcon, RefreshIcon, SettingsIcon } from '@renderer/components/icons'
@@ -25,10 +22,7 @@ function App(): React.JSX.Element {
   const [whatsNew, setWhatsNew] = useState<WhatsNew>()
   const [opened, setOpened] = useState<string>()
   const [feedbackOpen, setFeedbackOpen] = useState(false)
-<<<<<<< ours
-=======
   const updateRequired = useUpdateRequired()
->>>>>>> theirs
   const { account } = useAccount()
 
   useEffect(() => {
@@ -133,10 +127,7 @@ function App(): React.JSX.Element {
           Electron {electron} · Chromium {chrome} · Node {node}
         </p>
       </main>
-<<<<<<< ours
-=======
       {updateRequired && <UpdateRequired updater={updater} />}
->>>>>>> theirs
       {feedbackOpen && (
         <FeedbackDialog signedIn={account?.user != null} onClose={() => setFeedbackOpen(false)} />
       )}
