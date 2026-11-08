@@ -61,7 +61,7 @@ function App(): React.JSX.Element {
       <UpdateBanner updater={updater} />
       <main className="flex min-h-screen flex-col items-center justify-center gap-6 p-8 pt-16">
         <img src={logo} alt="" className="size-20 rounded-2xl" />
-        <h1 className="text-3xl font-semibold tracking-tight">Electron Desktop Template</h1>
+        <h1 className="text-3xl font-semibold tracking-tight">Gozap</h1>
         <p className="max-w-md text-center text-muted-foreground">
           Electron + Vite + React + TypeScript + Tailwind + shadcn/ui, with auto-updates and CI.
         </p>

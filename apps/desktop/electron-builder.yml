@@ -1,5 +1,5 @@
-appId: com.0xbasinas.electron-desktop-template
-productName: Electron Desktop Template
+appId: com.0xbasinas.gozap
+productName: Gozap
 directories:
   buildResources: build
 files:
@@ -16,7 +16,7 @@ files:
 protocols:
   - name: App deep link
     schemes:
-      - electron-desktop-template
+      - gozap
 fileAssociations:
   - ext: tpl
     name: Template file
@@ -42,7 +42,7 @@ electronFuses:
 asarUnpack:
   - 'resources/**'
 win:
-  executableName: electron-desktop-template
+  executableName: gozap
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}
@@ -62,7 +62,7 @@ mac:
 dmg:
   artifactName: ${name}-${version}.${ext}
 linux:
-  executableName: electron-desktop-template
+  executableName: gozap
   target:
     - AppImage
     - deb
@@ -74,5 +74,5 @@ npmRebuild: false
 publish:
   provider: github
   owner: 0xbasinas
-  repo: electron-desktop-template
+  repo: gozap
   releaseType: release

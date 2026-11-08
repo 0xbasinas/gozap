@@ -6,7 +6,7 @@ import { openSettingsWindow } from './settingsWindow'
 import { requestUpdateCheck, requestWhatsNew, showWindow } from './windowUtils'
 
 // Where the Help menu points. `pnpm rename` updates this for your own repo.
-const REPO_URL = 'https://github.com/0xbasinas/electron-desktop-template'
+const REPO_URL = 'https://github.com/0xbasinas/gozap'
 
 const isMac = process.platform === 'darwin'
 

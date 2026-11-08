@@ -7,7 +7,7 @@ import { showWindow } from './windowUtils'
 
 // URL scheme for deep links, e.g. electron-desktop-template://open/42
 // Keep in sync with `protocols` in electron-builder.yml (`pnpm rename` does this for you).
-export const PROTOCOL = 'electron-desktop-template'
+export const PROTOCOL = 'gozap'
 
 // File types the app opens, e.g. double-clicking notes.tpl. Keep in sync with `fileAssociations`.
 const FILE_EXTENSIONS = ['.tpl']

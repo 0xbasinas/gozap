@@ -80,7 +80,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(() => {
     serveRenderer()
-    electronApp.setAppUserModelId('com.0xbasinas.electron-desktop-template')
+    electronApp.setAppUserModelId('com.0xbasinas.gozap')
 
     // Default open or close DevTools by F12 in development
     // and ignore CommandOrControl + R in production.

@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "electron-desktop-template",
+  "name": "gozap",
   "main": "src/index.ts",
   "compatibility_date": "2026-11-04",
   // Better Auth uses AsyncLocalStorage.
@@ -21,8 +21,8 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "electron-desktop-template",
-      // Replace with the id printed by `wrangler d1 create electron-desktop-template`.
+      "database_name": "gozap",
+      // Replace with the id printed by `wrangler d1 create gozap`.
       "database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "drizzle"
     }
@@ -32,11 +32,11 @@
     // The public address of the site (and of the API: same origin). Change it to your domain.
     "BETTER_AUTH_URL": "http://localhost:8787",
     // Origins besides the site that may call the API. The desktop app sends its deep-link scheme as its origin.
-    "TRUSTED_ORIGINS": "electron-desktop-template:/",
+    "TRUSTED_ORIGINS": "gozap:/",
     // The product name shown in sign-in emails and on passkey prompts. `pnpm setup:cloud` and `pnpm rename` set it.
-    "APP_NAME": "Electron Desktop Template",
+    "APP_NAME": "Gozap",
     // Sender address. The domain must be verified in Resend.
-    "EMAIL_FROM": "Electron Desktop Template <login@example.com>"
+    "EMAIL_FROM": "Gozap <login@example.com>"
   },
   // Secrets (set with `wrangler secret put`): BETTER_AUTH_SECRET, RESEND_API_KEY.
 
@@ -47,7 +47,7 @@
     // its own URL. Without RESEND_API_KEY, sign-in links are printed to the Worker log instead of emailed.
     "vars": {
       "PREVIEW": "true",
-      "APP_NAME": "Electron Desktop Template",
+      "APP_NAME": "Gozap",
       "BETTER_AUTH_URL": "http://localhost:8787",
       "TRUSTED_ORIGINS": "",
       "EMAIL_FROM": "Preview <preview@example.com>"
@@ -57,7 +57,7 @@
     "d1_databases": [
       {
         "binding": "DB",
-        "database_name": "electron-desktop-template-preview",
+        "database_name": "gozap-preview",
         "database_id": "00000000-0000-0000-0000-000000000001"
       }
     ]
