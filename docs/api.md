@@ -52,7 +52,7 @@ Cloudflare Workers Free allows 100,000 requests/day and 10 ms CPU per request; D
 The design keeps well inside that:
 
 - **No passwords**: password hashing is CPU heavy and would not fit in 10 ms. Magic links need no hashing.
-- **Session cookie cache** (5 minutes): most requests do not read the database.
+- **Session cookie cache** (1 minute): most Better Auth requests do not read the database. Our own routes still check, by primary key, that the session exists and the person is not suspended, so a suspension or sign-out stops them at once.
 - **Rate limits only on sign-in**: each counted request is a D1 write, so `/get-session` is not counted.
 - **Static files are free**: only `/api/*` runs Worker code.
 - Resend's free plan is 100 emails/day, 3,000/month, so sign-in emails are the real ceiling.
@@ -95,10 +95,87 @@ which one is the caller's. `PATCH /api/devices/:id` sets or clears the nickname 
 which goes with the session or the account), and `DELETE /api/devices/:id` signs that device out. The id is the session's row id,
 never its token, every query is limited to the caller's own sessions, and the caller's own session cannot be deleted this way
 (sign out instead). These routes check the database on every call, so a device you signed out stops working at once; routes that
-use the 5-minute session cookie cache (preferences, feedback) can take up to 5 minutes to notice.
+use the session cookie cache (preferences, feedback) still check the session and suspension in the database, so they stop at once too.
 
 The web app shows this on `/account` ("Your devices") and the desktop app in Settings. A nickname belongs to a session, so signing
 in again on the same device starts without one. Nicknames are listed in the data export.
+
+## Feature flags and the kill switch
+
+`GET /api/flags?channel=stable|beta&id=<install id>` is public and needs no sign-in. It answers `{ "flags": { "key": true } }` for that
+install. A flag is on when it is not killed, the channel matches (no channels means all), and the install falls inside `percent`
+(a stable hash of the key and the install id, so raising the percentage only adds installs). Unknown flags are off, so code
+must treat "absent" as off. The install id is random, made by the app or browser, and not stored by the server.
+
+Change them with `pnpm flags list`, `pnpm flags set new-editor --percent 25 --channels beta`, `pnpm flags kill new-editor`,
+`pnpm flags revive new-editor` and `pnpm flags delete new-editor` (local database; add `--remote` for the real one).
+The kill switch beats everything and reaches running apps within about five minutes (the API caches for 60 seconds,
+clients refresh every five). Use `useFlag('key')` in the desktop renderer or the web app.
+
+## Consent ledger
+
+`consent` is an append-only list of what a person agreed to or withdrew: purpose, granted, the policy version (`POLICY_VERSION` in
+`packages/shared/src/consents.ts`) and the time. `GET /api/account/consents` returns the latest answer per purpose and the
+history; `POST` with `{ purpose, granted }` adds an entry (repeating the current answer adds nothing; withdrawing something never
+agreed to is ignored). Entries are never edited, go when the account is deleted, and are in the account export. To ask for a new
+thing, add it to `CONSENT_PURPOSES` and `CONSENT_LABELS`; bump `POLICY_VERSION` when the policy text changes. The privacy page
+shows "Your agreements". Nothing here is needed to sign in.
+
+## Bot check on sign-in (Cloudflare Turnstile, optional)
+
+The email-link request (`POST /sign-in/magic-link`) is the one endpoint that sends email, so it can be protected with Cloudflare Turnstile, which is free and runs on your own Cloudflare account.
+
+- Create a Turnstile widget in the Cloudflare dashboard (hostname: your site). Put the **site key** in `TURNSTILE_SITE_KEY` (a public variable in `apps/api/wrangler.jsonc`) and the **secret key** with `wrangler secret put TURNSTILE_SECRET_KEY`.
+- The check turns on only when **both** are set. `/api/app-config` then returns `turnstileSiteKey`; the sign-in page shows the widget and sends the token in the `x-captcha-response` header. Without a token the API answers 400 and sends no email; a failed check is 403. A token works once, so the page asks for a new one after every try.
+- Only `/sign-in/magic-link` is checked (not the link itself, and not passkeys). A request without a valid token still counts against the sign-in rate limit.
+- The tests fake Cloudflare's answer (a stubbed `siteverify`): a token Cloudflare accepts sends the email with our secret, a rejected one is 403, a missing one never reaches Cloudflare, and an unreachable Cloudflare fails closed (5xx, no email). To try it locally use Cloudflare's test keys: site `1x00000000000000000000AA`, secret `1x0000000000000000000000000000000AA`.
+- The page's security headers (`apps/web/public/_headers`) allow `https://challenges.cloudflare.com` for scripts, frames and connections.
+
+## Security activity (audit trail)
+
+Table `audit_event` (`apps/api/src/audit.ts`) records what happened to an account: sign-ins (from the session hook), failed magic-link and passkey sign-ins, sessions revoked, profile and passkey changes, and admin actions. Better Auth `hooks.after` decides what to record (`eventForCall`, tested); a bad magic link is a redirect with `error=`, not an error object. Writes run after the response and never fail a request.
+
+- `GET /api/account/security-activity` lists the person's own latest 50 events; the same list is in the data export, and the privacy summary counts them.
+- `detail` holds a code only, never what a stranger typed. Failed sign-ins have no person attached and are removed after 30 days; everything else after a year (daily job). Events about a person are deleted with the account.
+
+## Staff roles and the admin page
+
+The Better Auth `admin` plugin is on, with two roles (`apps/api/src/permissions.ts`): **admin** (list, create, update, set role or password, suspend, impersonate, revoke sessions; not delete, not impersonate other admins) and **support** (list and look up people and sessions only). Everyone else is `user` and can do nothing there.
+
+- Nobody is staff by default and sign-up never grants a role. Give or take one with `pnpm admin:grant <email> [admin|support]` and `pnpm admin:revoke <email>` (local database; add `--remote` for the real one). The person must have signed in once.
+- A role change shows up on their next sign-in, or within 1 minute (the session cookie cache).
+- `/admin` in the website lists people (search by email, pages of 25) and lets an admin suspend or restore them. Suspending ends their sessions and blocks new ones; the server enforces permissions, the page only hides buttons.
+- Suspending ends the person's sessions at once. Our own routes (account, preferences, feedback, API keys) refuse a suspended person immediately. Only Better Auth's own endpoints (for example the admin and team routes) read the session cookie cache, so a demoted or suspended staff member could still act there for up to 1 minute.
+- `GET /api/admin/audit/:userId` (admin and support) returns one person's security activity; the "Activity" button on `/admin` shows it.
+- Admin actions are written to the audit trail with `actor_id` set to the staff member.
+- Deleting an account stays on the person's own cooling-off flow; the plugin's delete is not granted to anyone.
+
+## API keys
+
+People make keys on their account page for scripts that act as them (`@better-auth/api-key`, table `apikey`). A key is shown once, is stored as a hash, expires after 90 days by default (at most 365), is limited to 60 requests a minute, needs a name, and a person may hold ten. Send it in the `x-api-key` header; `GET /api/v1/me` is the example call and shows how to check a key on the server (`auth.api.verifyApiKey`, which rejects suspended people). Usage counters are written after the response (`deferUpdates`).
+
+- `apikey.reference_id` has no foreign key, so the daily deletion job removes a person's keys itself (`deletion.ts`). The data export lists name, first characters and dates, never the key.
+- A key is made with the single permission `account: read`. Every route that accepts a key must name the permission it needs when it checks it (`/api/v1/me` passes `permissions: { account: ['read'] }` to `verifyApiKey`); add a new permission for new kinds of access, never reuse `account`. Do not enable `enableSessionForAPIKeys`.
+
+## Teams
+
+The Better Auth `organization` plugin is on (tables `organization`, `member`, `invitation`; `session.active_organization_id`). Anyone signed in can start up to 5 teams; a team holds up to 50 people; the starter is the `owner`. No sub-teams and no custom roles yet.
+
+- `/teams` in the website: create a team, see members, invite by email, cancel an invitation, remove a member, leave (or, for the owner, delete).
+- The invitation email (`teams.ts`) links to `/accept-invitation/<id>`, which asks the person to sign in with the invited address (`/sign-in?next=...`, a path on this site only) and then accept. Someone else's account cannot accept it. Invitations last 7 days, a re-invite cancels the old one, and an address that bounced gets nothing.
+- All foreign keys cascade. Deleting an account also deletes teams nobody else belongs to (`soloTeamsDeletion`, same batch as the deletion); teams with other members stay. The data export lists a person's teams and their role.
+- The audit trail records team created/deleted/left, invitations sent and accepted, and members removed.
+
+## Single sign-on for companies (OpenID Connect)
+
+`@better-auth/sso` is on, **OpenID Connect only**. Table `sso_provider` (cascades with the admin who added it, so deleting that admin removes the provider).
+
+- **Who sets it up:** only an `admin` can register a provider (`providersLimit` is 25 for admins and 0 for everyone else), from the "Company sign-in" section of `/admin`: provider name, issuer URL, email domain, client id and secret. The secret is stored in the database row; treat the database as secret-bearing and use `defaultSSO` in code instead if you prefer to keep it out.
+- **Proof of domain:** domain verification is on. A provider cannot sign anyone in until its domain has a DNS TXT record `_better-auth-token-<provider>.<domain>` with the token shown after registering; "Check the record" confirms it (a lookup that uses `node:dns/promises`, which works on Workers with `nodejs_compat`).
+- **Signing in:** "Sign in with your company" on the sign-in page takes the work email, finds the provider by its domain and redirects to the company's login. An unverified domain answers 401. A new person is created on first sign-in; an existing person is linked only when the domain is verified.
+- **A company can only create accounts at its own domain.** A `user.create.before` hook rejects a new account from `/sso/callback/<provider>` when the address is not at the provider's domain (or a subdomain). Without it a provider with a proven domain could create accounts, and keep a session, for any address. Tested.
+- **SAML is refused** (`/sso/register` with a `samlConfig` answers 400). Checking a SAML response took about 10 to 15 ms in a local test, above the 10 ms CPU limit of the free Workers plan. Enable it only on the paid plan, after measuring in production.
+- Tested here with a fake provider that signs real RS256 id tokens: a whole login (register, domain proof, authorize, callback, session), a person at another domain, and an unproven domain. A real login against Google Workspace, Okta or Entra has not been tried: test each in gozap before promising it to a customer. Deleting a provider does not end sessions already created through it.
 
 ## Feedback
 
@@ -116,7 +193,7 @@ table with `wrangler d1 execute` until the admin dashboard exists.
 `/account` on the site (signed-in only) lets a person sign out everywhere, download their data and delete their account.
 The API behind it is `GET /api/account`, `GET /api/account/export` and `DELETE /api/account` (`apps/api/src/app.ts`).
 
-- These routes ask the database for the session instead of trusting the 5-minute cookie cache, so a deleted account or a
+- These routes ask the database for the session instead of trusting the 1-minute cookie cache, so a deleted account or a
   revoked session stops working at once.
 - The export lists the account, the settings and the sign-ins (time, IP, browser) and never any token.
 - Deleting needs the email typed again, and it is a request first: `DELETE /api/account` answers `202 { scheduledFor }` and the account stays for
@@ -128,6 +205,22 @@ The API behind it is `GET /api/account`, `GET /api/account/export` and `DELETE /
 - A daily cron (`triggers.crons` in `apps/api/wrangler.jsonc`, handled by `scheduled` in `apps/api/src/index.ts`) calls `deleteDueAccounts`,
   which removes up to 50 due users per run. Sessions, linked accounts, passkeys, settings, feedback and device names go with the user
   (`ON DELETE CASCADE`) and unused sign-in links are removed. The cron needs no extra setup on Cloudflare's free plan.
+- **Email change.** `POST /api/account/email-change` ({ newEmail }) sends a link to the NEW address (it works for an hour, once; only a hash is stored in
+  `email_change`). Nothing changes until the link's page sends the token to `POST /api/account/email-change/confirm` (no sign-in needed; a click is
+  required, so link scanners cannot confirm). Then the account uses the new address and the old address gets a notice. The answer is the same for an
+  address that is already taken (so addresses cannot be probed), asking again within a minute gives 429, and `pendingEmail` shows on the account and export.
+
+- **Sign-in activity.** Every new session is recorded in `sign_in_event` (time, a readable browser and system label, IP address) by a Better Auth
+  database hook in `auth.ts`, after the response. A sign-in from a browser and system the account has not used before (never the first sign-in of an
+  account) also sends an alert email. `GET /api/account/sign-ins` lists the last 20, they appear in the export, and the daily cron prunes entries older
+  than 90 days. The label is a rough match (`describeDevice`), so a browser update does not trigger alerts but a different browser or system does.
+
+- **Data requests.** Exports and deletions are logged in `data_request` (kind, status `received`/`processing`/`done`/`cancelled`, received and due dates;
+  the due date is 30 days after the request, `DATA_REQUEST_DEADLINE_DAYS`). An export is `done` at once; a deletion is `processing` during the cooling-off period, then
+  `done` (or `cancelled`). `GET /api/account/requests` lists them, they show on the privacy page and in the export, and when the daily job deletes an account the person gets
+  a last "your account was deleted" email. The table has **no link to the user and no email address** on purpose: the entry must outlive the account, so only a random id, the
+  kind, the status and the dates remain. The daily job removes entries after a year.
+
 - **When you add your own tables**, give them `userId ... references user.id ON DELETE CASCADE`, and add their rows to the export
   in `app.ts`, so deletion and export stay complete. The tests in `apps/api/test/api.test.ts` ("account") show how to check it.
 

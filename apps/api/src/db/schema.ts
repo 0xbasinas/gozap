@@ -36,6 +36,83 @@ export const accountDeletion = sqliteTable(
   (table) => [index('account_deletion_due_idx').on(table.scheduledFor)]
 )
 
+/** One entry in a person's consent ledger (append-only): agreed to or withdrew a purpose, under a policy version. */
+export const consent = sqliteTable(
+  'consent',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    purpose: text('purpose').notNull(),
+    granted: integer('granted', { mode: 'boolean' }).notNull(),
+    policyVersion: text('policy_version').notNull(),
+    at: integer('at').notNull()
+  },
+  (table) => [index('consent_user_idx').on(table.userId, table.at)]
+)
+
+/**
+ * A feature flag: who gets a feature without a new release. `killed` is the kill switch (off for everyone, at once).
+ * Not per person, so it needs no link to a user. Edited with `pnpm flags`.
+ */
+export const featureFlag = sqliteTable('feature_flag', {
+  key: text('key').primaryKey(),
+  description: text('description').notNull().default(''),
+  killed: integer('killed', { mode: 'boolean' }).notNull().default(false),
+  /** Comma separated channels ("stable,beta"); empty means all of them. */
+  channels: text('channels').notNull().default(''),
+  percent: integer('percent').notNull().default(0),
+  updatedAt: integer('updated_at').notNull()
+})
+
+/**
+ * A request about personal data (export, deletion) with a status and a deadline. No link to the user row and no email:
+ * it has to outlive the account it is about, so only a random id, the kind, the status and the dates remain.
+ */
+export const dataRequest = sqliteTable(
+  'data_request',
+  {
+    id: text('id').primaryKey(),
+    /** The user id at the time (a random value; the user row may be gone). */
+    subjectId: text('subject_id').notNull(),
+    kind: text('kind').notNull(),
+    status: text('status').notNull(),
+    receivedAt: integer('received_at').notNull(),
+    dueAt: integer('due_at').notNull(),
+    completedAt: integer('completed_at')
+  },
+  (table) => [index('data_request_subject_idx').on(table.subjectId, table.receivedAt)]
+)
+
+/** One sign-in (a session was created), kept for the activity list and the new-device alert. Pruned after 90 days. */
+export const signInEvent = sqliteTable(
+  'sign_in_event',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    at: integer('at').notNull(),
+    label: text('label').notNull(),
+    ipAddress: text('ip_address'),
+    newDevice: integer('new_device', { mode: 'boolean' }).notNull().default(false)
+  },
+  (table) => [index('sign_in_event_user_at_idx').on(table.userId, table.at)]
+)
+
+/** A pending move to a new email address: it happens when the link sent to the new address is used. */
+export const emailChange = sqliteTable('email_change', {
+  userId: text('user_id')
+    .primaryKey()
+    .references(() => user.id, { onDelete: 'cascade' }),
+  newEmail: text('new_email').notNull(),
+  requestedAt: integer('requested_at').notNull(),
+  expiresAt: integer('expires_at').notNull(),
+  /** SHA-256 of the token in the link, so a leaked database cannot be used to take over an address. */
+  tokenHash: text('token_hash').notNull()
+})
+
 /** A name the person gave one of their sessions ("Work laptop"). Goes with the session or the account. */
 export const sessionNickname = sqliteTable('session_nickname', {
   sessionId: text('session_id')
@@ -66,4 +143,29 @@ export const feedback = sqliteTable(
     createdAt: integer('created_at').notNull()
   },
   (table) => [index('feedback_user_created_idx').on(table.userId, table.createdAt)]
+)
+
+/**
+ * Security events about an account (sign-ins, failures, sessions revoked, profile and passkey changes, admin actions).
+ * `userId` is the person it is about; null for a failure that cannot be tied to anyone. `actorId` is who did it when
+ * that is someone else (an admin), with no foreign key so it survives their own deletion. `detail` holds codes only,
+ * never what a stranger typed. See audit.ts.
+ */
+export const auditEvent = sqliteTable(
+  'audit_event',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id').references(() => user.id, { onDelete: 'cascade' }),
+    actorId: text('actor_id'),
+    type: text('type').notNull(),
+    outcome: text('outcome').notNull(),
+    ipAddress: text('ip_address'),
+    label: text('label'),
+    detail: text('detail'),
+    at: integer('at').notNull()
+  },
+  (table) => [
+    index('audit_event_user_at_idx').on(table.userId, table.at),
+    index('audit_event_type_at_idx').on(table.type, table.at)
+  ]
 )

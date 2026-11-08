@@ -1,9 +1,13 @@
 import * as Sentry from '@sentry/cloudflare'
-import { createApp } from './app'
+import { createApp, defaultEmailSender } from './app'
+import { DEFAULT_APP_NAME } from './auth'
 import { createDb } from './db'
-import { deleteDueAccounts } from './deletion'
+import { pruneRequests } from './dataRequests'
+import { accountDeletedEmail, deleteDueAccounts } from './deletion'
 import type { Bindings } from './env'
 import { withPreviewUrl } from './preview'
+import { pruneSignIns } from './signIns'
+import { pruneAudit } from './audit'
 
 export type { AppType } from './app'
 export type { Bindings } from './env'
@@ -25,7 +29,14 @@ export default Sentry.withSentry(
     fetch: (request, env: Bindings, ctx) => app.fetch(request, withPreviewUrl(request, env), ctx),
     // Once a day (see triggers in wrangler.jsonc): remove accounts whose deletion cooling-off period is over.
     scheduled: async (_controller, env: Bindings) => {
-      const removed = await deleteDueAccounts(createDb(env.DB), Date.now())
+      const db = createDb(env.DB)
+      await pruneSignIns(db, Date.now())
+      await pruneAudit(db, Date.now())
+      await pruneRequests(db, Date.now())
+      const appName = env.APP_NAME || DEFAULT_APP_NAME
+      const removed = await deleteDueAccounts(db, Date.now(), 50, (to) =>
+        defaultEmailSender(env).send({ to, ...accountDeletedEmail(appName) })
+      )
       if (removed > 0) console.log(`Deleted ${removed} account(s) whose cooling-off period ended`)
     }
   }

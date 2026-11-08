@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -9,6 +9,29 @@ const auth = vi.hoisted(() => ({
   session: null as null | { user: { email: string } },
   pending: false,
   magicLink: vi.fn(),
+  apiKey: { list: vi.fn(), create: vi.fn(), delete: vi.fn() },
+  signInSso: vi.fn(),
+  sso: { register: vi.fn(), verifyDomain: vi.fn() },
+  organization: {
+    list: vi.fn(),
+    create: vi.fn(),
+    getFullOrganization: vi.fn(),
+    inviteMember: vi.fn(),
+    cancelInvitation: vi.fn(),
+    removeMember: vi.fn(),
+    leave: vi.fn(),
+    delete: vi.fn(),
+    getInvitation: vi.fn(),
+    acceptInvitation: vi.fn()
+  },
+  admin: {
+    listUsers: vi.fn(),
+    banUser: vi.fn(),
+    unbanUser: vi.fn(),
+    setRole: vi.fn(),
+    impersonateUser: vi.fn(),
+    stopImpersonating: vi.fn()
+  },
   transfer: vi.fn(),
   ensureRedirect: vi.fn(() => 0),
   revoke: vi.fn(),
@@ -20,13 +43,17 @@ const auth = vi.hoisted(() => ({
 vi.mock('./lib/auth', () => ({
   authClient: {
     useSession: () => ({ data: auth.session, isPending: auth.pending }),
-    signIn: { magicLink: auth.magicLink, passkey: auth.signInPasskey },
+    signIn: { magicLink: auth.magicLink, passkey: auth.signInPasskey, sso: auth.signInSso },
     passkey: {
       listUserPasskeys: auth.listPasskeys,
       addPasskey: auth.addPasskey,
       deletePasskey: auth.deletePasskey
     },
     signOut: vi.fn(),
+    admin: auth.admin,
+    apiKey: auth.apiKey,
+    organization: auth.organization,
+    sso: auth.sso,
     $fetch: auth.transfer,
     ensureElectronRedirect: auth.ensureRedirect,
     revokeSessions: auth.revoke
@@ -37,13 +64,37 @@ const accountApi = vi.hoisted(() => ({
   export: vi.fn(),
   remove: vi.fn(),
   cancelDeletion: vi.fn(),
-  cancelDeletionWithToken: vi.fn()
+  cancelDeletionWithToken: vi.fn(),
+  changeEmail: vi.fn(),
+  signIns: vi.fn(),
+  securityActivity: vi.fn(),
+  privacy: vi.fn(),
+  requests: vi.fn(),
+  consents: vi.fn(),
+  setConsent: vi.fn(),
+  confirmEmailChange: vi.fn()
+}))
+const appConfigApi = vi.hoisted(() => vi.fn())
+const turnstileProps = vi.hoisted(() => ({
+  onToken: vi.fn() as (token: string | null) => void
+}))
+vi.mock('./components/Turnstile', () => ({
+  Turnstile: (props: { onToken: (token: string | null) => void }) => {
+    turnstileProps.onToken = props.onToken
+    return <div data-testid="turnstile" />
+  }
 }))
 const prefsApi = vi.hoisted(() => ({ get: vi.fn(), put: vi.fn() }))
 const feedbackApi = vi.hoisted(() => ({ send: vi.fn() }))
 const devicesApi = vi.hoisted(() => ({ list: vi.fn(), rename: vi.fn(), signOut: vi.fn() }))
 vi.mock('./lib/api', () => ({
-  api: { account: accountApi, preferences: prefsApi, feedback: feedbackApi, devices: devicesApi }
+  api: {
+    appConfig: appConfigApi,
+    account: accountApi,
+    preferences: prefsApi,
+    feedback: feedbackApi,
+    devices: devicesApi
+  }
 }))
 
 beforeEach(() => {
@@ -54,6 +105,9 @@ beforeEach(() => {
   auth.ensureRedirect.mockClear()
   auth.signInPasskey.mockReset().mockResolvedValue({ data: {}, error: null })
   auth.listPasskeys.mockReset().mockResolvedValue({ data: [], error: null })
+  auth.apiKey.list.mockReset().mockResolvedValue({ data: { apiKeys: [] }, error: null })
+  auth.apiKey.create.mockReset()
+  auth.apiKey.delete.mockReset().mockResolvedValue({ data: {}, error: null })
   auth.addPasskey.mockReset().mockResolvedValue({ data: {}, error: null })
   auth.deletePasskey.mockReset().mockResolvedValue({ data: {}, error: null })
   auth.revoke.mockReset().mockResolvedValue({ data: {}, error: null })
@@ -62,9 +116,11 @@ beforeEach(() => {
     email: 'ada@example.com',
     name: 'ada',
     createdAt: '2026-01-01T00:00:00.000Z',
-    deletionScheduledFor: null
+    deletionScheduledFor: null,
+    pendingEmail: null
   })
   localStorage.clear()
+  appConfigApi.mockReset().mockResolvedValue({ minimumVersion: null })
   prefsApi.get.mockReset().mockResolvedValue({
     preferences: { theme: 'system', accent: 'neutral' },
     updatedAt: 0
@@ -95,6 +151,56 @@ beforeEach(() => {
   accountApi.remove.mockReset().mockResolvedValue({ scheduledFor: '2026-12-01T00:00:00.000Z' })
   accountApi.cancelDeletion.mockReset().mockResolvedValue(undefined)
   accountApi.cancelDeletionWithToken.mockReset().mockResolvedValue(undefined)
+  accountApi.securityActivity.mockReset().mockResolvedValue([
+    {
+      at: '2026-11-01T10:00:00Z',
+      type: 'user_sign_in_failed',
+      outcome: 'failure',
+      label: 'Chrome on Windows',
+      ipAddress: null
+    }
+  ])
+  accountApi.signIns.mockReset().mockResolvedValue([
+    {
+      at: '2026-01-02T00:00:00.000Z',
+      label: 'Safari on macOS',
+      ipAddress: '1.2.3.4',
+      newDevice: true
+    },
+    {
+      at: '2026-01-01T00:00:00.000Z',
+      label: 'Chrome on Windows',
+      ipAddress: null,
+      newDevice: false
+    }
+  ])
+  accountApi.privacy.mockReset().mockResolvedValue({
+    devices: 2,
+    signIns: 5,
+    passkeys: 1,
+    feedback: 1,
+    hasSyncedSettings: true
+  })
+  accountApi.consents.mockReset().mockResolvedValue({ current: {}, history: [] })
+  accountApi.setConsent.mockReset()
+  accountApi.requests.mockReset().mockResolvedValue([
+    {
+      kind: 'deletion',
+      status: 'processing',
+      receivedAt: '2026-11-01T00:00:00.000Z',
+      dueAt: '2026-12-01T00:00:00.000Z',
+      completedAt: null
+    },
+    {
+      kind: 'export',
+      status: 'done',
+      receivedAt: '2026-10-01T00:00:00.000Z',
+      dueAt: '2026-10-31T00:00:00.000Z',
+      completedAt: '2026-10-01T00:00:00.000Z'
+    }
+  ])
+  accountApi.changeEmail.mockReset().mockResolvedValue(undefined)
+  accountApi.confirmEmailChange.mockReset().mockResolvedValue({ email: 'new@example.com' })
 })
 
 const at = (path: string): void => {
@@ -224,10 +330,34 @@ describe('sign-in page', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('did not work')
   })
 
+  it('says when the account is suspended', () => {
+    at('/sign-in?error=suspended')
+    expect(screen.getByRole('alert')).toHaveTextContent('suspended')
+  })
+
   it('skips the form when already signed in', () => {
     auth.session = { user: { email: 'ada@example.com' } }
     at('/sign-in')
     expect(screen.getByRole('heading', { name: 'Web app' })).toBeInTheDocument()
+  })
+})
+
+describe('sign-in challenge', () => {
+  it('asks for the check first and sends its token with the request', async () => {
+    appConfigApi.mockResolvedValue({ minimumVersion: null, turnstileSiteKey: 'site-key' })
+    at('/sign-in')
+    await userEvent.type(screen.getByLabelText('Email'), 'ada@example.com')
+    await screen.findByTestId('turnstile')
+    await userEvent.click(screen.getByRole('button', { name: 'Email me a sign-in link' }))
+    expect(auth.magicLink).not.toHaveBeenCalled()
+    expect(screen.getByRole('alert')).toHaveTextContent('Complete the check')
+    act(() => turnstileProps.onToken('tok-1'))
+    await userEvent.click(screen.getByRole('button', { name: 'Email me a sign-in link' }))
+    expect(auth.magicLink).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fetchOptions: { headers: { 'x-captcha-response': 'tok-1' } }
+      })
+    )
   })
 })
 
@@ -269,6 +399,135 @@ describe('signing in from the desktop app', () => {
     at('/auth/desktop')
     expect(screen.getByRole('heading', { name: 'Opening the desktop app' })).toBeInTheDocument()
     expect(auth.ensureRedirect).toHaveBeenCalled()
+  })
+})
+
+describe('status page', () => {
+  const release = (tag: string, prerelease: boolean, hoursAgo: number): unknown => ({
+    tag_name: tag,
+    html_url: 'https://github.com/o/r/releases/tag/' + tag,
+    assets: [],
+    prerelease,
+    published_at: new Date(Date.now() - hoursAgo * 3_600_000).toISOString()
+  })
+
+  it('shows the newest stable and beta versions and the usual rollout stage', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => [release('v1.0.9-beta', true, 3), release('v1.0.8', false, 30)]
+      })
+    )
+    appConfigApi.mockResolvedValue({ minimumVersion: '1.0.5' })
+    at('/status')
+    expect(await screen.findByText('v1.0.8')).toBeInTheDocument()
+    expect(screen.getByText('v1.0.9-beta')).toBeInTheDocument()
+    expect(screen.getByText(/about 25% of people/)).toBeInTheDocument()
+    expect(screen.getByText(/older than 1.0.5 must be updated/)).toBeInTheDocument()
+  })
+
+  it('still works when the minimum version cannot be read', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, json: async () => [release('v1.0.8', false, 100)] })
+    )
+    appConfigApi.mockRejectedValue(new Error('down'))
+    at('/status')
+    expect(await screen.findByText('Offered to everyone.')).toBeInTheDocument()
+    expect(screen.getByText(/No limit/)).toBeInTheDocument()
+  })
+
+  it('says so when the releases cannot be loaded', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    at('/status')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not load the releases')
+  })
+})
+
+describe('privacy page', () => {
+  it('shows what is stored, with counts', async () => {
+    auth.session = { user: { email: 'ada@example.com' } }
+    at('/account/privacy')
+    expect(await screen.findByText(/2 places you are signed in/)).toBeInTheDocument()
+    expect(screen.getByText(/5 sign-ins from the last 90 days/)).toBeInTheDocument()
+    expect(screen.getByText(/1 message you sent us/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Download my data' })).toBeInTheDocument()
+    const requests = await screen.findByRole('region', { name: 'Your requests' })
+    expect(within(requests).getByText('Account deletion')).toBeInTheDocument()
+    expect(within(requests).getByText('In progress')).toBeInTheDocument()
+    expect(within(requests).getByText('Data export')).toBeInTheDocument()
+    expect(within(requests).getByText('Done')).toBeInTheDocument()
+  })
+
+  it('lets a person agree to something and shows it was saved', async () => {
+    auth.session = { user: { email: 'ada@example.com' } }
+    accountApi.setConsent.mockResolvedValue({
+      current: { 'crash-reports': true },
+      history: [
+        {
+          purpose: 'crash-reports',
+          granted: true,
+          policyVersion: 'v',
+          at: new Date().toISOString()
+        }
+      ]
+    })
+    at('/account/privacy')
+    const section = await screen.findByRole('region', { name: 'Your agreements' })
+    await userEvent.click(within(section).getAllByRole('button', { name: 'Agree' })[1]!)
+    expect(await within(section).findByRole('button', { name: 'Withdraw' })).toBeInTheDocument()
+    expect(accountApi.setConsent).toHaveBeenCalledWith('crash-reports', true)
+  })
+
+  it('sends signed-out visitors to the sign-in page', () => {
+    at('/account/privacy')
+    expect(screen.getByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
+  })
+})
+
+describe('sign-in activity', () => {
+  it('lists recent sign-ins and marks a new device', async () => {
+    auth.session = { user: { email: 'ada@example.com' } }
+    at('/account')
+    const region = await screen.findByRole('region', { name: 'Recent sign-ins' })
+    expect(await within(region).findByText('Safari on macOS')).toBeInTheDocument()
+    expect(within(region).getByText('Chrome on Windows')).toBeInTheDocument()
+    expect(within(region).getByText('New')).toBeInTheDocument()
+  })
+})
+
+describe('email change', () => {
+  it('asks for the change from the account page', async () => {
+    auth.session = { user: { email: 'ada@example.com' } }
+    at('/account')
+    await userEvent.type(await screen.findByLabelText('New email address'), 'New@Example.com')
+    await userEvent.click(screen.getByRole('button', { name: 'Change email' }))
+    await waitFor(() => expect(accountApi.changeEmail).toHaveBeenCalledWith('New@Example.com'))
+    expect(
+      await screen.findByText(/Check new@example.com for a confirmation link/)
+    ).toBeInTheDocument()
+  })
+
+  it('confirms only when the button is pressed', async () => {
+    at('/account/confirm-email?token=abc')
+    expect(accountApi.confirmEmailChange).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm this address' }))
+    await waitFor(() => expect(accountApi.confirmEmailChange).toHaveBeenCalledWith('abc'))
+    expect(
+      await screen.findByRole('heading', { name: 'Your email address was changed' })
+    ).toBeInTheDocument()
+  })
+
+  it('says so when the link no longer works', async () => {
+    accountApi.confirmEmailChange.mockRejectedValue(new Error('404'))
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    at('/account/confirm-email?token=abc')
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm this address' }))
+    expect(
+      await screen.findByRole('heading', { name: 'This link does not work' })
+    ).toBeInTheDocument()
   })
 })
 
@@ -480,5 +739,282 @@ describe('devices', () => {
     await userEvent.type(screen.getByLabelText('Device name'), 'Home PC')
     await userEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(devicesApi.rename).toHaveBeenCalledWith('d1', 'Home PC'))
+  })
+})
+
+describe('admin page', () => {
+  const people = {
+    data: {
+      users: [
+        { id: 'u1', email: 'me@example.com', role: 'admin', banned: false },
+        { id: 'u2', email: 'them@example.com', role: 'user', banned: false }
+      ],
+      total: 2
+    },
+    error: null
+  }
+
+  it('sends people who are not staff away', () => {
+    auth.session = { user: { email: 'a@b.co', id: 'u9', role: 'user' } } as never
+    at('/admin')
+    expect(auth.admin.listUsers).not.toHaveBeenCalled()
+    expect(screen.queryByRole('heading', { name: 'People' })).not.toBeInTheDocument()
+  })
+
+  it('lets an admin list and suspend people, but not themselves', async () => {
+    auth.session = { user: { email: 'me@example.com', id: 'u1', role: 'admin' } } as never
+    auth.admin.listUsers.mockResolvedValue(people)
+    auth.admin.banUser.mockResolvedValue({ data: {}, error: null })
+    at('/admin')
+    expect(await screen.findByText('them@example.com')).toBeInTheDocument()
+    const buttons = screen.getAllByRole('button', { name: 'Suspend' })
+    expect(buttons).toHaveLength(1)
+    await userEvent.click(buttons[0]!)
+    expect(auth.admin.banUser).toHaveBeenCalledWith(expect.objectContaining({ userId: 'u2' }))
+  })
+
+  it("lets an admin change another person's role", async () => {
+    auth.session = { user: { email: 'me@example.com', id: 'u1', role: 'admin' } } as never
+    auth.admin.listUsers.mockResolvedValue(people)
+    auth.admin.setRole.mockResolvedValue({ data: {}, error: null })
+    at('/admin')
+    await screen.findByText('them@example.com')
+    await userEvent.selectOptions(screen.getByLabelText('Role of them@example.com'), 'support')
+    expect(auth.admin.setRole).toHaveBeenCalledWith({ userId: 'u2', role: 'support' })
+  })
+
+  it('shows a banner with a stop button while helping someone', () => {
+    auth.session = {
+      user: { email: 'them@example.com', id: 'u2' },
+      session: { impersonatedBy: 'u1' }
+    } as never
+    at('/account')
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument()
+  })
+
+  it('shows support the list without any buttons to change it', async () => {
+    auth.session = { user: { email: 'help@example.com', id: 'u3', role: 'support' } } as never
+    auth.admin.listUsers.mockResolvedValue(people)
+    at('/admin')
+    expect(await screen.findByText('them@example.com')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Suspend' })).not.toBeInTheDocument()
+  })
+})
+
+describe('API keys on the account page', () => {
+  beforeEach(() => {
+    auth.session = { user: { email: 'ada@example.com' } }
+  })
+
+  it('shows a new key once, and lists keys by name', async () => {
+    auth.apiKey.create.mockResolvedValue({ data: { key: 'key_secret123' }, error: null })
+    auth.apiKey.list.mockResolvedValue({
+      data: { apiKeys: [{ id: 'k1', name: 'Backup', start: 'key_ab', expiresAt: null }] },
+      error: null
+    })
+    at('/account')
+    expect(await screen.findByText(/Backup/)).toBeInTheDocument()
+    await userEvent.type(screen.getByLabelText('Key name'), 'Deploy')
+    await userEvent.click(screen.getByRole('button', { name: 'Make a key' }))
+    expect(auth.apiKey.create).toHaveBeenCalledWith({ name: 'Deploy' })
+    expect(await screen.findByText('key_secret123')).toBeInTheDocument()
+  })
+
+  it('deletes a key', async () => {
+    auth.apiKey.list.mockResolvedValue({
+      data: { apiKeys: [{ id: 'k1', name: 'Backup', start: 'key_ab', expiresAt: null }] },
+      error: null
+    })
+    at('/account')
+    await screen.findByText(/Backup/)
+    const list = screen.getByRole('region', { name: 'API keys' })
+    await userEvent.click(within(list).getByRole('button', { name: 'Delete' }))
+    expect(auth.apiKey.delete).toHaveBeenCalledWith({ keyId: 'k1' })
+  })
+})
+
+describe('security activity on the account page', () => {
+  it('lists events with plain names and marks failures', async () => {
+    auth.session = { user: { email: 'ada@example.com' } }
+    at('/account')
+    const section = await screen.findByRole('region', { name: 'Security activity' })
+    expect(await within(section).findByText('Sign-in failed')).toBeInTheDocument()
+    expect(within(section).getByText('Failed')).toBeInTheDocument()
+  })
+})
+
+describe('teams', () => {
+  const team = {
+    id: 't1',
+    name: 'Acme',
+    members: [
+      { id: 'm1', userId: 'u1', role: 'owner', user: { email: 'me@example.com', name: 'Me' } },
+      { id: 'm2', userId: 'u2', role: 'member', user: { email: 'mate@example.com', name: 'Mate' } }
+    ],
+    invitations: [{ id: 'i1', email: 'new@example.com', role: 'member', status: 'pending' }]
+  }
+  beforeEach(() => {
+    auth.session = { user: { email: 'me@example.com', id: 'u1' } } as never
+    auth.organization.list.mockResolvedValue({ data: [{ id: 't1', name: 'Acme' }], error: null })
+    auth.organization.getFullOrganization.mockResolvedValue({ data: team, error: null })
+    auth.organization.create.mockResolvedValue({ data: {}, error: null })
+    auth.organization.inviteMember.mockResolvedValue({ data: {}, error: null })
+    auth.organization.removeMember.mockResolvedValue({ data: {}, error: null })
+  })
+
+  it('creates a team', async () => {
+    at('/teams')
+    await screen.findByText('Acme')
+    await userEvent.type(screen.getByLabelText('Team name'), 'Beta')
+    await userEvent.click(screen.getByRole('button', { name: 'Create team' }))
+    expect(auth.organization.create).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'Beta', slug: expect.stringMatching(/^beta-/) })
+    )
+  })
+
+  it('lets an owner invite and remove people', async () => {
+    at('/teams')
+    await userEvent.click(await screen.findByRole('button', { name: 'Open' }))
+    const section = await screen.findByRole('region', { name: 'Team Acme' })
+    await userEvent.type(within(section).getByLabelText('Email to invite'), 'friend@example.com')
+    await userEvent.click(within(section).getByRole('button', { name: 'Send invitation' }))
+    expect(auth.organization.inviteMember).toHaveBeenCalledWith({
+      email: 'friend@example.com',
+      role: 'member',
+      organizationId: 't1'
+    })
+    await userEvent.click(within(section).getByRole('button', { name: 'Remove' }))
+    expect(auth.organization.removeMember).toHaveBeenCalledWith({
+      memberIdOrEmail: 'm2',
+      organizationId: 't1'
+    })
+  })
+
+  it('shows a plain member no way to invite or remove', async () => {
+    auth.session = { user: { email: 'mate@example.com', id: 'u2' } } as never
+    at('/teams')
+    await userEvent.click(await screen.findByRole('button', { name: 'Open' }))
+    const section = await screen.findByRole('region', { name: 'Team Acme' })
+    expect(within(section).queryByLabelText('Email to invite')).not.toBeInTheDocument()
+    expect(within(section).queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument()
+    expect(within(section).getByRole('button', { name: 'Leave team' })).toBeInTheDocument()
+  })
+})
+
+describe('accepting an invitation', () => {
+  it('asks a signed-out visitor to sign in and comes back afterwards', async () => {
+    auth.session = null
+    at('/accept-invitation/inv1')
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }))
+    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
+  })
+
+  it('shows the team and joins it', async () => {
+    auth.session = { user: { email: 'guest@example.com', id: 'u5' } } as never
+    auth.organization.getInvitation.mockResolvedValue({
+      data: { organizationName: 'Acme' },
+      error: null
+    })
+    auth.organization.acceptInvitation.mockResolvedValue({ data: {}, error: null })
+    auth.organization.list.mockResolvedValue({ data: [], error: null })
+    at('/accept-invitation/inv1')
+    await userEvent.click(await screen.findByRole('button', { name: 'Accept invitation' }))
+    expect(auth.organization.acceptInvitation).toHaveBeenCalledWith({ invitationId: 'inv1' })
+  })
+
+  it('sends a signed-in person on to the page they asked for, but only on this site', async () => {
+    auth.session = { user: { email: 'a@b.co', id: 'u1' } } as never
+    at('/sign-in?next=%2Fteams')
+    expect(await screen.findByRole('heading', { name: 'Teams' })).toBeInTheDocument()
+    at('/sign-in?next=%2F%2Fevil.example')
+    expect(screen.queryByText('evil.example')).not.toBeInTheDocument()
+  })
+})
+
+describe('company sign-in', () => {
+  it('starts single sign-on with the work email', async () => {
+    auth.session = null
+    auth.signInSso.mockResolvedValue({ data: {}, error: null })
+    at('/sign-in')
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in with your company' }))
+    expect(auth.signInSso).not.toHaveBeenCalled()
+    await userEvent.type(screen.getByLabelText('Email'), 'ada@acme.example')
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in with your company' }))
+    expect(auth.signInSso).toHaveBeenCalledWith({
+      email: 'ada@acme.example',
+      callbackURL: '/app'
+    })
+  })
+
+  it('explains when the company has no single sign-on', async () => {
+    auth.session = null
+    auth.signInSso.mockResolvedValue({ data: null, error: { status: 404 } })
+    at('/sign-in')
+    await userEvent.type(screen.getByLabelText('Email'), 'ada@nobody.example')
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in with your company' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('not set up single sign-on')
+  })
+
+  it('lets an admin add a provider and shows the DNS record to publish', async () => {
+    auth.session = { user: { email: 'me@example.com', id: 'u1', role: 'admin' } } as never
+    auth.admin.listUsers.mockResolvedValue({ data: { users: [], total: 0 }, error: null })
+    auth.sso.register.mockResolvedValue({
+      data: { domainVerificationToken: 'tok123' },
+      error: null
+    })
+    auth.sso.verifyDomain.mockResolvedValue({ data: {}, error: null })
+    at('/admin')
+    await userEvent.type(await screen.findByLabelText('Provider name'), 'acme')
+    await userEvent.type(screen.getByLabelText('Issuer URL'), 'https://idp.acme.example')
+    await userEvent.type(screen.getByLabelText('Email domain'), 'Acme.Example')
+    await userEvent.type(screen.getByLabelText('Client ID'), 'cid')
+    await userEvent.type(screen.getByLabelText('Client secret'), 'shh')
+    await userEvent.click(screen.getByRole('button', { name: 'Add provider' }))
+    expect(auth.sso.register).toHaveBeenCalledWith(
+      expect.objectContaining({ providerId: 'acme', domain: 'acme.example' })
+    )
+    expect(await screen.findByText(/tok123/)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Check the record' }))
+    expect(await screen.findByText(/Domain verified/)).toBeInTheDocument()
+  })
+
+  it('does not show provider setup to support staff', async () => {
+    auth.session = { user: { email: 'help@example.com', id: 'u3', role: 'support' } } as never
+    auth.admin.listUsers.mockResolvedValue({ data: { users: [], total: 0 }, error: null })
+    at('/admin')
+    await screen.findByRole('heading', { name: 'People' })
+    expect(screen.queryByLabelText('Provider name')).not.toBeInTheDocument()
+  })
+})
+
+describe('admin: one person activity', () => {
+  it('loads and shows the activity of the chosen person', async () => {
+    auth.session = { user: { email: 'me@example.com', id: 'u1', role: 'admin' } } as never
+    auth.admin.listUsers.mockResolvedValue({
+      data: {
+        users: [{ id: 'u2', email: 'them@example.com', role: 'user', banned: false }],
+        total: 1
+      },
+      error: null
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        Response.json([
+          {
+            at: '2026-11-01T10:00:00Z',
+            type: 'user_sign_in_failed',
+            outcome: 'failure',
+            label: null,
+            ipAddress: '1.2.3.4'
+          }
+        ])
+      )
+    )
+    at('/admin')
+    await userEvent.click(await screen.findByRole('button', { name: 'Activity' }))
+    const section = await screen.findByRole('region', { name: 'Activity' })
+    expect(await within(section).findByText(/user sign in failed/)).toBeInTheDocument()
+    expect(fetch).toHaveBeenCalledWith('/api/admin/audit/u2', expect.anything())
   })
 })

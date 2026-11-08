@@ -1,8 +1,12 @@
 import { useEffect, useState, type FormEvent, type JSX } from 'react'
 import { Button } from '@repo/ui'
 import { ACCENTS, DELETION_COOLING_OFF_DAYS, type Account, type Preferences } from '@repo/shared'
-import { Navigate, useNavigate } from 'react-router'
+import { Link, Navigate, useNavigate } from 'react-router'
 import { DevicesSection } from '../components/DevicesSection'
+import { ApiKeysSection } from '../components/ApiKeysSection'
+import { SecurityActivitySection } from '../components/SecurityActivitySection'
+import { SignInsSection } from '../components/SignInsSection'
+import { EmailSection } from '../components/EmailSection'
 import { api } from '../lib/api'
 import { authClient } from '../lib/auth'
 import { AccentPicker, ThemePicker, type ThemeChoice } from '@repo/ui'
@@ -230,6 +234,8 @@ function AccountDetails(): JSX.Element {
         />
       </section>
 
+      {account && <EmailSection email={account.email} pendingEmail={account.pendingEmail} />}
+
       <section className="space-y-2">
         <h2 className="text-lg font-semibold">Passkeys</h2>
         <p className="text-sm text-muted-foreground">
@@ -271,6 +277,10 @@ function AccountDetails(): JSX.Element {
 
       <DevicesSection />
 
+      <SignInsSection />
+      <SecurityActivitySection />
+      <ApiKeysSection />
+
       <section className="space-y-2">
         <h2 className="text-lg font-semibold">Your data</h2>
         <p className="text-sm text-muted-foreground">
@@ -279,7 +289,10 @@ function AccountDetails(): JSX.Element {
         </p>
         <Button variant="outline" disabled={busy} onClick={() => void download()}>
           Download my data
-        </Button>
+        </Button>{' '}
+        <Link to="/account/privacy" className="text-sm underline">
+          See what we store
+        </Link>
       </section>
 
       {account?.deletionScheduledFor ? (

@@ -12,8 +12,10 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@better-auth/api-key": "1.7.18",
     "@better-auth/electron": "^1.7.18",
     "@better-auth/passkey": "^1.7.18",
+    "@better-auth/sso": "1.7.18",
     "@repo/shared": "workspace:*",
     "better-auth": "^1.7.18",
     "react": "catalog:",

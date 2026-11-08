@@ -63,6 +63,12 @@ export const api = {
     ipcRenderer.invoke(IPC.feedbackSend, request),
 
   // Account sync
+  getFlags: (): Promise<Record<string, boolean>> => ipcRenderer.invoke(IPC.flagsGet),
+  onFlagsChanged: (cb: (flags: Record<string, boolean>) => void): (() => void) =>
+    subscribe(IPC.flagsChanged, cb),
+  getUpdateRequired: (): Promise<boolean> => ipcRenderer.invoke(IPC.updateRequiredGet),
+  onUpdateRequiredChanged: (cb: (required: boolean) => void): (() => void) =>
+    subscribe(IPC.updateRequiredChanged, cb),
   getSyncStatus: (): Promise<SyncStatus> => ipcRenderer.invoke(IPC.syncStatus),
   retrySync: (): Promise<void> => ipcRenderer.invoke(IPC.syncRetry),
 
