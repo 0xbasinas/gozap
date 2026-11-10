@@ -84,7 +84,7 @@ Everything the script does can be done manually; this is also how to fix one ste
 | Resend domain   | Resend dashboard → Domains → Add domain, add the DNS records, **Verify**                                                                                   |
 | Secrets         | `pnpm --filter @repo/api exec wrangler secret put BETTER_AUTH_SECRET` and `... RESEND_API_KEY` (after the first deploy)                                    |
 | Migrations      | `pnpm --filter @repo/api db:migrate:remote`                                                                                                                |
-| Deploy          | `pnpm exec turbo run build --filter=@repo/web && pnpm --filter @repo/api exec wrangler deploy`                                                             |
+| Deploy          | `pnpm build:site && pnpm --filter @repo/api exec wrangler deploy`                                                                                          |
 | GitHub settings | Settings → Secrets and variables → Actions: variable `API_URL`, variable `CLOUDFLARE_DEPLOY=true`, secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` |
 
 ## Checking your setup

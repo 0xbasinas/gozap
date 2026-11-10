@@ -283,8 +283,9 @@ starlight-toc a[aria-current='true'] {
 .sl-markdown-content :is(td, th) {
   overflow-wrap: anywhere;
 }
+/* Inline code in a cell may wrap at its spaces, so a long command never pushes the table under the sidebar. */
 .sl-markdown-content :is(td, th) code {
-  white-space: nowrap;
+  white-space: normal;
 }
 
 /* Spacing: buttons keep their padding in every variant, and the page actions sit clear of the title. */
