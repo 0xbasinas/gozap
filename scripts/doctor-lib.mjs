@@ -150,7 +150,7 @@ export function checkGitHub({ variables, secrets, variableValues = {} }) {
         secrets,
         'BACKUP_PASSPHRASE',
         'Secret',
-        'Backups refuse to run without it: see docs/api.md (Backups)',
+        'Backups refuse to run without it: see docs/api/operations.md (Backups)',
         'warn'
       )
     )

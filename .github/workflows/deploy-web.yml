@@ -1,12 +1,16 @@
 name: Deploy web and API
 # Deploys the website and the API (one Cloudflare Worker) when they change on main. The desktop app is released by
-# its own workflows and is not touched. Nothing happens until you turn it on: see "Deploy" in docs/api.md.
+# its own workflows and is not touched. Nothing happens until you turn it on: see "Deploy" in docs/api/overview.md.
 on:
   push:
     branches: [main]
     paths:
       - 'apps/web/**'
       - 'apps/api/**'
+      - 'apps/docs/**'
+      - 'docs/**'
+      - 'docs-versions/**'
+      - 'scripts/assemble-site.mjs'
       - 'packages/**'
       - 'pnpm-lock.yaml'
       - '.github/workflows/deploy-web.yml'
@@ -34,14 +38,18 @@ jobs:
     environment: production
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The docs show a "Last updated" date for each page, taken from git history. A shallow clone would give
+          # every page the date of the checkout, so fetch it all.
+          fetch-depth: 0
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # Build the site first: the Worker serves apps/web/dist next to /api.
-      - run: pnpm exec turbo run build --filter=@repo/web
+      # Build the website and the docs first: the Worker serves apps/web/dist (with the docs at /docs) next to /api.
+      - run: pnpm build:site
       - name: Apply database migrations
         run: pnpm --filter @repo/api db:migrate:remote
         env:

@@ -1,0 +1,193 @@
+---
+// Draws ```mermaid code blocks as diagrams. Our own small version of the astro-mermaid idea, working with Starlight:
+//  - Starlight turns the block into an Expressive Code figure; this script reads the source back from it, renders it
+//    with the `mermaid` library and swaps the figure for the SVG. If anything fails, the code block simply stays.
+//  - `mermaid` is imported on demand, so pages without a diagram download none of it.
+//  - Colours come from the shared theme (the CSS variables the whole site uses), and the diagram is drawn again when
+//    the reader switches between light and dark.
+---
+
+<script>
+  type Mermaid = typeof import('mermaid').default
+
+  const BLOCKS = '.expressive-code:has(pre[data-language="mermaid"])'
+  let loading: Promise<Mermaid> | null = null
+  let counter = 0
+
+  /** The source text of a diagram block: its lines, joined. */
+  function sourceOf(figure: Element): string {
+    return [...figure.querySelectorAll('pre .ec-line .code')]
+      .map((line) => line.textContent ?? '')
+      .join('\n')
+  }
+
+  /** A CSS colour from the theme (any format, including oklch) as an #rrggbb value the diagram library understands. */
+  function themeColor(variable: string): string {
+    const probe = document.createElement('span')
+    probe.style.color = `var(${variable})`
+    document.body.append(probe)
+    const resolved = getComputedStyle(probe).color
+    probe.remove()
+    const canvas = document.createElement('canvas')
+    canvas.width = canvas.height = 1
+    const context = canvas.getContext('2d', { willReadFrequently: true })
+    if (!context) return '#888888'
+    context.clearRect(0, 0, 1, 1)
+    context.fillStyle = resolved
+    context.fillRect(0, 0, 1, 1)
+    const [r, g, b] = context.getImageData(0, 0, 1, 1).data
+    return '#' + [r, g, b].map((v) => (v ?? 0).toString(16).padStart(2, '0')).join('')
+  }
+
+  function load(): Promise<Mermaid> {
+    loading ??= import('mermaid').then((module) => module.default).catch((error: unknown) => {
+      loading = null
+      throw error
+    })
+    return loading
+  }
+
+  function configure(mermaid: Mermaid): void {
+    const text = themeColor('--foreground')
+    const background = themeColor('--background')
+    const surface = themeColor('--secondary')
+    const card = themeColor('--card')
+    const line = themeColor('--muted-foreground')
+    const edge = themeColor('--ring')
+    const accent = themeColor('--primary')
+    const font = getComputedStyle(document.body).fontFamily
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: 'strict',
+      theme: 'base',
+      fontFamily: font,
+      flowchart: { curve: 'basis', padding: 10, htmlLabels: true, nodeSpacing: 28, rankSpacing: 36, useMaxWidth: true },
+      sequence: { actorMargin: 40, messageMargin: 32, mirrorActors: false },
+      themeVariables: {
+        fontSize: '12px',
+        dropShadow: 'none',
+        // The diagram sits on a card, so its own background (and the labels written on lines) match the card.
+        background: card,
+        // Boxes: the secondary surface with a soft outline, text in the foreground colour.
+        primaryColor: surface,
+        primaryTextColor: text,
+        primaryBorderColor: edge,
+        secondaryColor: card,
+        secondaryTextColor: text,
+        secondaryBorderColor: edge,
+        tertiaryColor: card,
+        tertiaryTextColor: text,
+        mainBkg: surface,
+        nodeBorder: edge,
+        nodeTextColor: text,
+        // Lines, arrows and the labels written on them.
+        lineColor: line,
+        textColor: text,
+        edgeLabelBackground: card,
+        arrowheadColor: line,
+        // Groups and notes.
+        clusterBkg: card,
+        clusterBorder: edge,
+        titleColor: text,
+        noteBkgColor: card,
+        noteTextColor: text,
+        noteBorderColor: edge,
+        // Sequence diagrams.
+        actorBkg: surface,
+        actorBorder: edge,
+        actorTextColor: text,
+        actorLineColor: edge,
+        signalColor: line,
+        signalTextColor: text,
+        labelBoxBkgColor: card,
+        labelBoxBorderColor: edge,
+        labelTextColor: text,
+        loopTextColor: text,
+        activationBkgColor: surface,
+        activationBorderColor: accent,
+        sequenceNumberColor: card,
+        // State and class diagrams.
+        stateBkg: surface,
+        stateLabelColor: text,
+        compositeBackground: card,
+        altBackground: card
+      },
+      // Crisper, flatter shapes than the library's default: rounded corners, thin outlines, no shadows.
+      themeCSS: `
+        .node rect, .node polygon, .node circle, .node ellipse, .node path { stroke-width: 1px !important; filter: none !important; }
+        .node rect { rx: 8px !important; ry: 8px !important; }
+        .cluster rect { rx: 10px !important; ry: 10px !important; stroke-width: 1px !important; filter: none !important; }
+        .edgePath .path, .flowchart-link { stroke-width: 1.5px; }
+        .edgeLabel, .edgeLabel p, .labelBkg { background-color: ${card} !important; border-radius: 4px; }
+        .actor { stroke-width: 1px; rx: 8px; ry: 8px; filter: none !important; }
+        .messageLine0, .messageLine1 { stroke-width: 1.5px; }
+        .labelBox { rx: 6px; ry: 6px; }
+        .note { rx: 6px; ry: 6px; stroke-width: 1px; filter: none !important; }
+        .sequenceNumber { font-weight: 600; }
+      `
+    })
+  }
+
+  async function draw(mermaid: Mermaid, source: string): Promise<HTMLElement> {
+    const { svg } = await mermaid.render(`mermaid-${counter++}`, source)
+    const holder = document.createElement('div')
+    holder.className = 'mermaid-diagram not-content'
+    holder.dataset.source = source
+    holder.setAttribute('role', 'img')
+    holder.innerHTML = svg
+    // Draw at the diagram's own size (never stretched to the column), shrinking only when it does not fit.
+    const drawn = holder.querySelector('svg')
+    const box = drawn?.viewBox.baseVal
+    if (drawn && box?.width) {
+      drawn.style.width = `${Math.round(box.width)}px`
+      drawn.style.maxWidth = '100%'
+    }
+    return holder
+  }
+
+  async function run(): Promise<void> {
+    const figures = [...document.querySelectorAll(BLOCKS)]
+    if (figures.length === 0) return
+    let mermaid: Mermaid
+    try {
+      mermaid = await load()
+    } catch (error) {
+      console.error('Could not load the diagram library; showing the diagram source instead.', error)
+      return
+    }
+    configure(mermaid)
+    for (const figure of figures) {
+      try {
+        figure.replaceWith(await draw(mermaid, sourceOf(figure)))
+      } catch (error) {
+        // A mistake in the diagram: keep the code block and say what the library found.
+        const note = document.createElement('p')
+        note.className = 'mermaid-error'
+        note.textContent = `This diagram could not be drawn: ${error instanceof Error ? error.message.split('\n')[0] : 'unknown error'}`
+        figure.before(note)
+      }
+    }
+  }
+
+  /** The reader switched between light and dark: draw every diagram again with the new colours. */
+  async function redraw(): Promise<void> {
+    const diagrams = [...document.querySelectorAll<HTMLElement>('.mermaid-diagram')]
+    if (diagrams.length === 0 || !loading) return
+    const mermaid = await load()
+    configure(mermaid)
+    for (const diagram of diagrams) {
+      try {
+        diagram.replaceWith(await draw(mermaid, diagram.dataset.source ?? ''))
+      } catch (error) {
+        // The old drawing stays.
+        console.warn('Could not redraw a diagram for the new theme.', error)
+      }
+    }
+  }
+
+  void run()
+  new MutationObserver(() => void redraw()).observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ['data-theme']
+  })
+</script>

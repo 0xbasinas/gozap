@@ -1,4 +1,4 @@
-import type { JSX } from 'react'
+import { Suspense, type JSX } from 'react'
 import { cn } from '@repo/ui'
 import { Link, NavLink, Outlet } from 'react-router'
 import { SITE_NAME } from '../config'
@@ -83,7 +83,9 @@ export function Layout(): JSX.Element {
         </nav>
       </header>
       <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-12">
-        <Outlet />
+        <Suspense fallback={null}>
+          <Outlet />
+        </Suspense>
       </main>
       <footer className="border-t border-border py-6 text-center text-xs text-muted-foreground">
         {SITE_NAME} ·{' '}

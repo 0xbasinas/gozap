@@ -1,0 +1,116 @@
+---
+// The site name, then (once the docs have saved versions) a small version picker: Latest and each saved version.
+// "same-page" keeps the page you are on when the other version has it; otherwise it opens that version's first page.
+import Default from '@astrojs/starlight/components/SiteTitle.astro'
+import { getCollection } from 'astro:content'
+import versionConfig from '../../versions.json'
+import sections from '../../sidebar.json'
+import { pickerTarget, versionOf } from '../../scripts/versions-lib.mjs'
+import { BASE } from '../../base.mjs'
+
+const { id } = Astro.locals.starlightRoute
+const versions: { slug: string; label: string; redirect?: string }[] = versionConfig.versions
+const pages = new Set((await getCollection('docs')).map((page) => page.id))
+const hasPage = (page: string): boolean => pages.has(page)
+const here = versionOf(id, versions)
+
+const choices = [
+  { slug: null, label: versionConfig.current.label, redirect: versionConfig.current.redirect },
+  ...versions
+].map((choice) => {
+  const target = choice.slug ? versions.find((v) => v.slug === choice.slug)! : null
+  return {
+    label: choice.label,
+    selected: (target?.slug ?? null) === (here?.slug ?? null),
+    href: BASE + pickerTarget({ id, from: here, to: target, sections, hasPage, redirect: choice.redirect })
+  }
+})
+const current = choices.find((choice) => choice.selected)
+---
+
+<Default><slot /></Default>
+{
+  versions.length > 0 && (
+    <details class="version-picker">
+      <summary aria-label="Docs version">
+        <span>{current?.label}</span>
+        <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+      </summary>
+      <ul>
+        {choices.map((choice) => (
+          <li>
+            <a href={choice.href} aria-current={choice.selected ? 'true' : undefined}>{choice.label}</a>
+          </li>
+        ))}
+      </ul>
+    </details>
+  )
+}
+
+<script>
+  // Close the list on a click elsewhere or on Escape.
+  const picker = document.querySelector<HTMLDetailsElement>('.version-picker')
+  if (picker) {
+    document.addEventListener('click', (event) => {
+      if (picker.open && !picker.contains(event.target as Node)) picker.open = false
+    })
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') picker.open = false
+    })
+  }
+</script>
+
+<style>
+  .version-picker {
+    position: relative;
+    margin-inline-start: 0.75rem;
+    font-size: var(--sl-text-xs);
+  }
+  summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.2rem 0.55rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--muted-foreground);
+    cursor: pointer;
+    list-style: none;
+  }
+  summary::-webkit-details-marker {
+    display: none;
+  }
+  summary:hover {
+    color: var(--foreground);
+    background: var(--secondary);
+  }
+  ul {
+    position: absolute;
+    inset-inline-start: 0;
+    top: calc(100% + 0.3rem);
+    z-index: 30;
+    min-width: 8rem;
+    margin: 0;
+    padding: 0.25rem;
+    list-style: none;
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) - 2px);
+    background: var(--background);
+    box-shadow: 0 8px 24px color-mix(in oklab, black 30%, transparent);
+  }
+  a {
+    display: block;
+    padding: 0.35rem 0.55rem;
+    border-radius: calc(var(--radius) - 4px);
+    color: var(--muted-foreground);
+    text-decoration: none;
+  }
+  a:hover {
+    color: var(--foreground);
+    background: var(--secondary);
+  }
+  a[aria-current='true'] {
+    color: var(--foreground);
+    font-weight: 600;
+  }
+</style>

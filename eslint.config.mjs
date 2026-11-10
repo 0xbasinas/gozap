@@ -14,6 +14,8 @@ export default defineConfig(
       '**/out',
       '**/.turbo',
       '**/.wrangler',
+      '**/.astro',
+      'apps/docs/scripts',
       'apps/desktop/scripts',
       '**/worker-configuration.d.ts',
       'apps/api/src/db/auth-schema.ts',

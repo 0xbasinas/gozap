@@ -29,6 +29,7 @@
     "check:bundle": "pnpm --filter ./apps/desktop run check:bundle",
     "check:release": "pnpm --filter ./apps/desktop run check:release",
     "check:fuses": "pnpm --filter ./apps/desktop run check:fuses",
+    "build:site": "turbo run build --filter=@repo/web --filter=@repo/docs && node scripts/assemble-site.mjs",
     "build:unpack": "pnpm --filter ./apps/desktop run build:unpack",
     "build:win": "pnpm --filter ./apps/desktop run build:win",
     "build:mac": "pnpm --filter ./apps/desktop run build:mac",

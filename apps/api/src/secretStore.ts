@@ -75,7 +75,9 @@ type Method = (args: Args) => Promise<unknown>
 /** Wraps a Better Auth database adapter factory so the provider's client secret is encrypted at rest. */
 export function withEncryptedProviderSecrets<A extends (options: never) => object>(
   inner: A,
-  secret: string
+  secret: string,
+  /** Runs before any row is created; throw to refuse it. Every plugin writes through here, so nothing can skip it. */
+  beforeCreate?: (model: string, data: Row) => Promise<void>
 ): A {
   const wrapped = ((options: never) => {
     const adapter = inner(options) as Record<string, Method>
@@ -83,16 +85,18 @@ export function withEncryptedProviderSecrets<A extends (options: never) => objec
     const open = (value: string): Promise<string> => openSecret(secret, value)
     const readRow = async (row: unknown): Promise<unknown> =>
       row && typeof row === 'object' ? mapConfig(row as Row, open) : row
-    return {
+    const result: Record<string, unknown> = {
       ...adapter,
-      create: async (args: Args) =>
-        readRow(
+      create: async (args: Args) => {
+        if (beforeCreate && args.data) await beforeCreate(args.model, args.data)
+        return readRow(
           await adapter.create!(
             args.model === MODEL && args.data
               ? { ...args, data: await mapConfig(args.data, seal) }
               : args
           )
-        ),
+        )
+      },
       update: async (args: Args) =>
         readRow(
           await adapter.update!(
@@ -108,6 +112,11 @@ export function withEncryptedProviderSecrets<A extends (options: never) => objec
         return args.model === MODEL && Array.isArray(rows) ? Promise.all(rows.map(readRow)) : rows
       }
     }
+    // D1 has no transactions, so Better Auth's fallback just runs the callback on the adapter it holds. Without this the
+    // callback would get the unwrapped adapter, and writes made inside it (invitations, single sign-on) would skip us.
+    result.transaction = async (callback: (adapter: unknown) => Promise<unknown>) =>
+      callback(result)
+    return result
   }) as unknown as A
   return wrapped
 }

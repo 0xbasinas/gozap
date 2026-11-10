@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, session } from 'electron'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { registerAppScheme, serveRenderer } from './appProtocol'
 import { setupCrashReporting, reportRendererCrash } from './crashReporting'
@@ -82,6 +82,12 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(() => {
     serveRenderer()
+    // The page asks for nothing the app needs (notifications, the tray and files are handled in main), so refuse
+    // every browser permission, however the request is made.
+    session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) =>
+      callback(false)
+    )
+    session.defaultSession.setPermissionCheckHandler(() => false)
     electronApp.setAppUserModelId('com.0xbasinas.gozap')
 
     // Default open or close DevTools by F12 in development

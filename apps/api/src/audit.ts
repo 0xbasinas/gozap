@@ -32,6 +32,24 @@ export type AuditType =
   | 'user_impersonated'
   | 'user_impersonated_stopped'
   | 'user_removed'
+  | 'sso_provider_added'
+  | 'sso_provider_updated'
+  | 'sso_provider_deleted'
+  | 'sso_user_provisioned'
+  | 'app_connected'
+  | 'app_disconnected'
+  | 'ai_app_disabled'
+  | 'ai_app_enabled'
+  | 'scim_connection_created'
+  | 'scim_connection_removed'
+  | 'scim_token_created'
+  | 'scim_token_revoked'
+  | 'scim_group_role_on'
+  | 'scim_group_role_off'
+  | 'scim_user_provisioned'
+  | 'scim_user_deactivated'
+  | 'scim_user_reactivated'
+  | 'scim_role_changed'
 
 export interface AuditInput {
   type: AuditType
@@ -42,6 +60,8 @@ export interface AuditInput {
   userAgent?: string | null
   /** A short code such as INVALID_TOKEN. Never free text from a stranger. */
   code?: string
+  /** What the event was about when that is not a person (an AI app's address). Kept in the row, never shown to the person. */
+  subject?: string
   now: number
 }
 
@@ -55,7 +75,10 @@ export async function recordAudit(db: Db, input: AuditInput): Promise<void> {
     outcome: input.outcome,
     ipAddress: input.ipAddress ?? null,
     label: input.userAgent ? describeDevice(input.userAgent) : null,
-    detail: input.code ? JSON.stringify({ code: input.code }) : null,
+    detail:
+      input.code || input.subject
+        ? JSON.stringify({ code: input.code, subject: input.subject })
+        : null,
     at: input.now
   })
 }
@@ -68,6 +91,8 @@ export interface AuthCall {
   failed: boolean
   /** Where a magic-link verify redirected. A failure redirects to a URL with `error=`. */
   location?: string | null
+  /** For the AI-app consent call: whether the person said yes (a no changes nothing, so it is not recorded). */
+  accepted?: boolean
 }
 
 const BY_PATH: Record<string, AuditType> = {
@@ -91,7 +116,12 @@ const BY_PATH: Record<string, AuditType> = {
   '/admin/set-role': 'user_role_updated',
   '/admin/impersonate-user': 'user_impersonated',
   '/admin/stop-impersonating': 'user_impersonated_stopped',
-  '/admin/remove-user': 'user_removed'
+  '/admin/remove-user': 'user_removed',
+  '/sso/register': 'sso_provider_added',
+  '/sso/update-provider': 'sso_provider_updated',
+  '/sso/delete-provider': 'sso_provider_deleted',
+  '/oauth2/consent': 'app_connected',
+  '/oauth2/delete-consent': 'app_disconnected'
 }
 
 /**
@@ -112,6 +142,7 @@ export function eventForCall(call: AuthCall): Pick<AuditInput, 'type' | 'outcome
   }
   const type = BY_PATH[call.path]
   if (!type) return null
+  if (call.path === '/oauth2/consent' && call.accepted !== true) return null
   // A call that failed changed nothing. The exception is a refused admin action, which is worth seeing.
   if (call.failed) {
     return call.path.startsWith('/admin/')

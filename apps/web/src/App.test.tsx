@@ -11,7 +11,13 @@ const auth = vi.hoisted(() => ({
   magicLink: vi.fn(),
   apiKey: { list: vi.fn(), create: vi.fn(), delete: vi.fn() },
   signInSso: vi.fn(),
-  sso: { register: vi.fn(), verifyDomain: vi.fn() },
+  sso: {
+    register: vi.fn(),
+    verifyDomain: vi.fn(),
+    providers: vi.fn(async () => ({ data: [], error: null })),
+    requestDomainVerification: vi.fn(),
+    deleteProvider: vi.fn()
+  },
   organization: {
     list: vi.fn(),
     create: vi.fn(),
@@ -221,15 +227,15 @@ describe('routes', () => {
     expect(downloads.every((l) => l.getAttribute('href') === '/download')).toBe(true)
   })
 
-  it('sends signed-out visitors from /app (and nested paths) to the sign-in page', () => {
+  it('sends signed-out visitors from /app (and nested paths) to the sign-in page', async () => {
     at('/app/anything/here')
-    expect(screen.getByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
   })
 
   it('shows the web app to a signed-in user', async () => {
     auth.session = { user: { email: 'ada@example.com' } }
     at('/app')
-    expect(screen.getByRole('heading', { name: 'Web app' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Web app' })).toBeInTheDocument()
     expect(screen.getByText('Signed in as ada@example.com')).toBeInTheDocument()
   })
 
@@ -282,9 +288,9 @@ describe('routes', () => {
     expect(screen.getByRole('heading', { name: /v2-beta/ })).toBeInTheDocument()
   })
 
-  it('lists the sub-processors', () => {
+  it('lists the sub-processors', async () => {
     at('/sub-processors')
-    expect(screen.getByRole('heading', { name: 'Sub-processors' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Sub-processors' })).toBeInTheDocument()
     for (const name of ['Cloudflare', 'Resend', 'GitHub']) {
       expect(screen.getByRole('heading', { name })).toBeInTheDocument()
     }
@@ -299,6 +305,19 @@ describe('routes', () => {
 })
 
 describe('sign-in page', () => {
+  it('sends the email link back to the authorize step when an AI app is waiting', async () => {
+    at(
+      '/sign-in?client_id=https%3A%2F%2Fa.example%2Fc.json&scope=openid&state=s&sig=abc&exp=1&next=%2Fevil'
+    )
+    await userEvent.type(screen.getByLabelText('Email'), 'ada@example.com')
+    await userEvent.click(screen.getByRole('button', { name: 'Email me a sign-in link' }))
+    const call = auth.magicLink.mock.calls[0]![0] as { callbackURL: string }
+    expect(call.callbackURL.startsWith('/api/auth/oauth2/authorize?client_id=')).toBe(true)
+    // The old signature is dropped (the server signs the request again) and nothing else leaks in.
+    expect(call.callbackURL).not.toContain('sig=')
+    expect(call.callbackURL).not.toContain('evil')
+  })
+
   it('asks for a link and tells the user to check their email', async () => {
     at('/sign-in')
     await userEvent.type(screen.getByLabelText('Email'), ' Ada@Example.com ')
@@ -395,9 +414,11 @@ describe('signing in from the desktop app', () => {
     )
   })
 
-  it('the callback page waits for the one-time code, then opens the app', () => {
+  it('the callback page waits for the one-time code, then opens the app', async () => {
     at('/auth/desktop')
-    expect(screen.getByRole('heading', { name: 'Opening the desktop app' })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('heading', { name: 'Opening the desktop app' })
+    ).toBeInTheDocument()
     expect(auth.ensureRedirect).toHaveBeenCalled()
   })
 })
@@ -513,7 +534,7 @@ describe('email change', () => {
   it('confirms only when the button is pressed', async () => {
     at('/account/confirm-email?token=abc')
     expect(accountApi.confirmEmailChange).not.toHaveBeenCalled()
-    await userEvent.click(screen.getByRole('button', { name: 'Confirm this address' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Confirm this address' }))
     await waitFor(() => expect(accountApi.confirmEmailChange).toHaveBeenCalledWith('abc'))
     expect(
       await screen.findByRole('heading', { name: 'Your email address was changed' })
@@ -524,7 +545,7 @@ describe('email change', () => {
     accountApi.confirmEmailChange.mockRejectedValue(new Error('404'))
     vi.spyOn(console, 'error').mockImplementation(() => {})
     at('/account/confirm-email?token=abc')
-    await userEvent.click(screen.getByRole('button', { name: 'Confirm this address' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Confirm this address' }))
     expect(
       await screen.findByRole('heading', { name: 'This link does not work' })
     ).toBeInTheDocument()
@@ -535,7 +556,7 @@ describe('cancel deletion page', () => {
   it('cancels only when the button is pressed', async () => {
     at('/account/cancel-deletion?token=abc')
     expect(accountApi.cancelDeletionWithToken).not.toHaveBeenCalled()
-    await userEvent.click(screen.getByRole('button', { name: 'Keep my account' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Keep my account' }))
     await waitFor(() => expect(accountApi.cancelDeletionWithToken).toHaveBeenCalledWith('abc'))
     expect(await screen.findByRole('heading', { name: 'Your account is safe' })).toBeInTheDocument()
   })
@@ -544,15 +565,17 @@ describe('cancel deletion page', () => {
     accountApi.cancelDeletionWithToken.mockRejectedValue(new Error('404'))
     vi.spyOn(console, 'error').mockImplementation(() => {})
     at('/account/cancel-deletion?token=abc')
-    await userEvent.click(screen.getByRole('button', { name: 'Keep my account' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Keep my account' }))
     expect(
       await screen.findByRole('heading', { name: 'This link does not work' })
     ).toBeInTheDocument()
   })
 
-  it('has nothing to do without a token', () => {
+  it('has nothing to do without a token', async () => {
     at('/account/cancel-deletion')
-    expect(screen.getByRole('heading', { name: 'This link does not work' })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('heading', { name: 'This link does not work' })
+    ).toBeInTheDocument()
   })
 })
 
@@ -685,9 +708,9 @@ describe('theme sync', () => {
 })
 
 describe('feedback page', () => {
-  it('sends you to sign in first', () => {
+  it('sends you to sign in first', async () => {
     at('/feedback')
-    expect(screen.getByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
   })
 
   it('sends the message with its kind and thanks you', async () => {
@@ -742,6 +765,46 @@ describe('devices', () => {
   })
 })
 
+describe('a team sign-in page', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it("offers the company's login for a team that has one, and starts it with the team slug", async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ name: 'Acme Corp' }))
+    )
+    auth.signInSso.mockReset().mockResolvedValue({ data: {}, error: null })
+    at('/t/acme/sign-in')
+    expect(await screen.findByRole('heading', { name: 'Sign in to Acme Corp' })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Continue with Acme Corp' }))
+    expect(auth.signInSso).toHaveBeenCalledWith({ organizationSlug: 'acme', callbackURL: '/app' })
+  })
+
+  it('passes the address in the link on as a login hint', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ name: 'Acme Corp' }))
+    )
+    auth.signInSso.mockReset().mockResolvedValue({ data: {}, error: null })
+    at('/t/acme/sign-in?login_hint=ada@acme.example')
+    await userEvent.click(await screen.findByRole('button', { name: 'Continue with Acme Corp' }))
+    expect(auth.signInSso).toHaveBeenCalledWith({
+      organizationSlug: 'acme',
+      callbackURL: '/app',
+      loginHint: 'ada@acme.example'
+    })
+  })
+
+  it('sends a team without a company sign-in to the ordinary sign-in page', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{}', { status: 404 }))
+    )
+    at('/t/nobody/sign-in')
+    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
+  })
+})
+
 describe('admin page', () => {
   const people = {
     data: {
@@ -790,6 +853,40 @@ describe('admin page', () => {
     } as never
     at('/account')
     expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument()
+  })
+
+  it('lets an admin switch an AI app off after confirming, and support does not see the list', async () => {
+    const fetched: { url: string; init?: RequestInit }[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        fetched.push({ url, init })
+        if (url === '/api/admin/ai-apps')
+          return Response.json([
+            {
+              clientId: 'https://assistant.example/client.json',
+              name: 'Test Assistant',
+              disabled: false,
+              people: 2,
+              createdAt: null
+            }
+          ])
+        return Response.json({ ok: true })
+      })
+    )
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    auth.session = { user: { email: 'me@example.com', id: 'u1', role: 'admin' } } as never
+    auth.admin.listUsers.mockResolvedValue(people)
+    at('/admin')
+    expect(await screen.findByText('Test Assistant')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Switch off' }))
+    expect(window.confirm).toHaveBeenCalled()
+    const post = fetched.find((f) => f.url === '/api/admin/ai-apps/disable')
+    expect(JSON.parse(String(post?.init?.body))).toEqual({
+      clientId: 'https://assistant.example/client.json'
+    })
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
   })
 
   it('shows support the list without any buttons to change it', async () => {
@@ -905,7 +1002,7 @@ describe('accepting an invitation', () => {
   it('asks a signed-out visitor to sign in and comes back afterwards', async () => {
     auth.session = null
     at('/accept-invitation/inv1')
-    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Sign in' }))
     expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
   })
 
@@ -940,9 +1037,11 @@ describe('company sign-in', () => {
     expect(auth.signInSso).not.toHaveBeenCalled()
     await userEvent.type(screen.getByLabelText('Email'), 'ada@acme.example')
     await userEvent.click(screen.getByRole('button', { name: 'Sign in with your company' }))
+    // The typed address also goes along as a hint, so the company's login can fill it in.
     expect(auth.signInSso).toHaveBeenCalledWith({
       email: 'ada@acme.example',
-      callbackURL: '/app'
+      callbackURL: '/app',
+      loginHint: 'ada@acme.example'
     })
   })
 
@@ -963,6 +1062,18 @@ describe('company sign-in', () => {
       error: null
     })
     auth.sso.verifyDomain.mockResolvedValue({ data: {}, error: null })
+    const real = globalThis.fetch
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) =>
+      String(input).startsWith('/api/sso-discover')
+        ? Response.json({
+            issuer: 'https://idp.acme.example',
+            authorizationEndpoint: 'https://idp.acme.example/authorize',
+            tokenEndpoint: 'https://idp.acme.example/token',
+            jwksEndpoint: 'https://idp.acme.example/keys',
+            tokenEndpointAuthMethods: ['client_secret_basic']
+          })
+        : real(input, init)
+    )
     at('/admin')
     await userEvent.type(await screen.findByLabelText('Provider name'), 'acme')
     await userEvent.type(screen.getByLabelText('Issuer URL'), 'https://idp.acme.example')
@@ -971,7 +1082,14 @@ describe('company sign-in', () => {
     await userEvent.type(screen.getByLabelText('Client secret'), 'shh')
     await userEvent.click(screen.getByRole('button', { name: 'Add provider' }))
     expect(auth.sso.register).toHaveBeenCalledWith(
-      expect.objectContaining({ providerId: 'acme', domain: 'acme.example' })
+      expect.objectContaining({
+        providerId: 'acme',
+        domain: 'acme.example',
+        oidcConfig: expect.objectContaining({
+          skipDiscovery: true,
+          tokenEndpoint: 'https://idp.acme.example/token'
+        })
+      })
     )
     expect(await screen.findByText(/tok123/)).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Check the record' }))
@@ -999,16 +1117,18 @@ describe('admin: one person activity', () => {
     })
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue(
-        Response.json([
-          {
-            at: '2026-11-01T10:00:00Z',
-            type: 'user_sign_in_failed',
-            outcome: 'failure',
-            label: null,
-            ipAddress: '1.2.3.4'
-          }
-        ])
+      vi.fn(async (url: string) =>
+        url === '/api/admin/ai-apps'
+          ? Response.json([])
+          : Response.json([
+              {
+                at: '2026-11-01T10:00:00Z',
+                type: 'user_sign_in_failed',
+                outcome: 'failure',
+                label: null,
+                ipAddress: '1.2.3.4'
+              }
+            ])
       )
     )
     at('/admin')
@@ -1016,5 +1136,77 @@ describe('admin: one person activity', () => {
     const section = await screen.findByRole('region', { name: 'Activity' })
     expect(await within(section).findByText(/user sign in failed/)).toBeInTheDocument()
     expect(fetch).toHaveBeenCalledWith('/api/admin/audit/u2', expect.anything())
+  })
+})
+
+describe('consent page (AI apps)', () => {
+  it('names the app, lists what it can do and posts the answer with the signed request', async () => {
+    auth.transfer.mockImplementation(async (path: string) =>
+      path === '/oauth2/public-client'
+        ? { data: { client_name: 'Test Assistant' }, error: null }
+        : { data: {}, error: null }
+    )
+    at('/consent?client_id=https%3A%2F%2Fa.example%2Fc.json&scope=openid%20mcp%3Aread&sig=abc')
+    expect(
+      await screen.findByRole('heading', { name: 'Connect Test Assistant?' })
+    ).toBeInTheDocument()
+    expect(screen.getByText(/Read your account/)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Deny' }))
+    await waitFor(() =>
+      expect(auth.transfer).toHaveBeenCalledWith(
+        '/oauth2/consent',
+        expect.objectContaining({
+          method: 'POST',
+          body: expect.objectContaining({
+            accept: false,
+            oauth_query: expect.stringContaining('sig=abc')
+          })
+        })
+      )
+    )
+  })
+
+  it('refuses a visit that carries no signed request', () => {
+    at('/consent')
+    expect(screen.getByRole('heading', { name: 'This link does not work' })).toBeInTheDocument()
+  })
+})
+
+describe('device page (AI apps without a browser)', () => {
+  it('names the app and what it asks for before approving, then approves', async () => {
+    auth.session = { user: { email: 'ada@example.com' } }
+    auth.transfer.mockImplementation(async (path: string) => {
+      if (path === '/device')
+        return {
+          data: {
+            status: 'pending',
+            client_id: 'https://a.example/c.json',
+            scope: 'openid mcp:read'
+          },
+          error: null
+        }
+      if (path === '/oauth2/public-client')
+        return { data: { client_name: 'Terminal Agent' }, error: null }
+      return { data: {}, error: null }
+    })
+    at('/device?user_code=ABCD1234')
+    await userEvent.click(await screen.findByRole('button', { name: 'Continue' }))
+    expect(
+      await screen.findByRole('heading', { name: 'Connect Terminal Agent?' })
+    ).toBeInTheDocument()
+    expect(screen.getByText(/Read your account/)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Allow' }))
+    await waitFor(() =>
+      expect(auth.transfer).toHaveBeenCalledWith(
+        '/device/approve',
+        expect.objectContaining({ body: { userCode: 'ABCD1234' } })
+      )
+    )
+    expect(await screen.findByRole('heading', { name: 'App connected' })).toBeInTheDocument()
+  })
+
+  it('sends a signed-out visitor to sign in first', async () => {
+    at('/device?user_code=ABCD1234')
+    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
   })
 })

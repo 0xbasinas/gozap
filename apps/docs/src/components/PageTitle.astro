@@ -1,0 +1,27 @@
+---
+// The usual page title, then the page actions menu (see PageActions.astro).
+import Default from '@astrojs/starlight/components/PageTitle.astro'
+import PageActions from './PageActions.astro'
+
+const { id, entry } = Astro.locals.starlightRoute
+const hasMarkdown = id !== 'index' && entry.data.template !== 'splash'
+---
+
+<div class="title-row">
+  <Default><slot /></Default>
+  {hasMarkdown && <PageActions slug={id} />}
+</div>
+
+<style>
+  .title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+  /* The title takes the room that is left and wraps; the actions stay on its right. */
+  .title-row > :global(h1) {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+</style>

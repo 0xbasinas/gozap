@@ -3,7 +3,7 @@ import * as Sentry from '@sentry/electron/main'
 import { getSettings } from './settings'
 
 // Remote crash reporting is off unless BOTH are true:
-//   1. the build has a Sentry DSN (set the SENTRY_DSN secret; see docs/releasing.md), and
+//   1. the build has a Sentry DSN (set the SENTRY_DSN secret; see docs/releasing/rollouts.md), and
 //   2. the user turned on "Send anonymous crash reports" in Settings.
 // Reports carry the app version and update channel, never the user's name or IP address.
 

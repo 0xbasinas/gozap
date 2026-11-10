@@ -8,6 +8,9 @@ import type { Bindings } from './env'
 import { withPreviewUrl } from './preview'
 import { pruneSignIns } from './signIns'
 import { pruneAudit } from './audit'
+import { pruneOauth } from './oauthPrune'
+import { pruneTombstones } from './tombstones'
+import { isDiscoveryPath } from './wellKnown'
 
 export type { AppType } from './app'
 export type { Bindings } from './env'
@@ -26,12 +29,23 @@ export default Sentry.withSentry(
     dataCollection: { userInfo: false }
   }),
   {
-    fetch: (request, env: Bindings, ctx) => app.fetch(request, withPreviewUrl(request, env), ctx),
+    fetch: (request, env: Bindings, ctx) => {
+      // OAuth discovery lives at the site root; hand it to the API (see the /__discovery route in app.ts).
+      const path = new URL(request.url).pathname
+      if (isDiscoveryPath(path)) {
+        const url = new URL(request.url)
+        url.pathname = '/api/__discovery' + path
+        request = new Request(url, request)
+      }
+      return app.fetch(request, withPreviewUrl(request, env), ctx)
+    },
     // Once a day (see triggers in wrangler.jsonc): remove accounts whose deletion cooling-off period is over.
     scheduled: async (_controller, env: Bindings) => {
       const db = createDb(env.DB)
       await pruneSignIns(db, Date.now())
       await pruneAudit(db, Date.now())
+      await pruneOauth(db, Date.now())
+      await pruneTombstones(db, Date.now())
       await pruneRequests(db, Date.now())
       const appName = env.APP_NAME || DEFAULT_APP_NAME
       const removed = await deleteDueAccounts(db, Date.now(), 50, (to) =>

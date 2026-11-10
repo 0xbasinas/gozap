@@ -1,5 +1,5 @@
 // Pure helpers for `pnpm template:update` (scripts/template-update.mjs): no git, no network, so they are unit tested.
-// See docs/template-updates.md.
+// See docs/guides/template-updates.md.
 
 export const CONFIG_PATH = '.template.json'
 export const DEFAULT_UPSTREAM = '0xbasinas/electron-desktop-template'

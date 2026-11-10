@@ -1,5 +1,5 @@
 // Pure helpers for scripts/catch-up.mjs (the "Catch up" workflow). No git, no network, so they are unit tested.
-// See docs/releasing.md ("When a merge does not start a release").
+// See docs/releasing/rollouts.md ("When a merge does not start a release").
 
 /** Turn a workflow `paths:` glob into a RegExp: `*` stays inside a folder, `**` crosses folders. */
 function globToRegExp(glob) {
