@@ -7,6 +7,13 @@ import { revealLogs } from './logger'
 import { getSettings, updateSettings } from './settings'
 import { openSettingsWindow } from './settingsWindow'
 import { requestUpdateCheck, requestWhatsNew, showWindow, toggleWindow } from './windowUtils'
+import { workspaceMenuItems } from './workspaceMenu'
+import {
+  getWorkspaces,
+  onWorkspacesChanged,
+  startWorkspaceSync,
+  switchWorkspace
+} from './workspaces'
 
 // Keep a reference, otherwise the tray icon is garbage collected and disappears.
 let tray: Tray | undefined
@@ -29,6 +36,9 @@ export function setupTray(windowGetter: () => BrowserWindow | undefined): void {
     }
     onAccountChanged((account) => track(account.user))
     void getAccount().then((account) => track(account.user))
+    // The "Workspace" submenu follows the person's teams and the one they work in.
+    onWorkspacesChanged(refreshTrayMenu)
+    startWorkspaceSync()
   } catch (error) {
     // Some Linux desktops have no tray. The app works fine without one.
     console.warn('[tray] Could not create the tray icon', error)
@@ -58,6 +68,14 @@ export function refreshTrayMenu(): void {
           notify('Diagnostics copied', 'Paste the report into your bug report.')
         }
       },
+      ...(signedIn && getWorkspaces().teams.length > 0
+        ? [
+            {
+              label: 'Workspace',
+              submenu: workspaceMenuItems(getWorkspaces(), (id) => void switchWorkspace(id))
+            }
+          ]
+        : []),
       ...(signedIn ? [{ label: 'Sign Out', click: () => void signOut() }] : []),
       { type: 'separator' },
       {

@@ -322,3 +322,15 @@ export const todo = sqliteTable(
     index('todo_user_created_idx').on(table.userId, table.createdAt)
   ]
 )
+
+/**
+ * "Who is online", opt-in (see presence.ts). One row per person who ever switched it on. `lastSeen` is 0 while it is
+ * off. Removed with the account; included in the data export.
+ */
+export const presence = sqliteTable('presence', {
+  userId: text('user_id')
+    .primaryKey()
+    .references(() => user.id, { onDelete: 'cascade' }),
+  visible: integer('visible', { mode: 'boolean' }).notNull().default(false),
+  lastSeen: integer('last_seen').notNull().default(0)
+})

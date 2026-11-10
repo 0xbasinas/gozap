@@ -61,6 +61,10 @@ export const accountExportSchema = z.object({
   teams: z
     .array(z.object({ name: z.string(), role: z.string(), joinedAt: z.string() }))
     .default([]),
+  presence: z
+    .object({ visible: z.boolean(), lastSeenAt: z.string().nullable() })
+    .nullable()
+    .default(null),
   todos: z
     .array(
       z.object({

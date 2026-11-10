@@ -6,7 +6,7 @@ import { z } from 'zod'
 import { schema, type Db } from './db'
 import type { Bindings } from './env'
 import { sameOriginOnly } from './origin'
-import { managesTeam, workspaceOf, type Workspace } from './workspace'
+import { canWrite, managesTeam, workspaceOf, type Workspace } from './workspace'
 
 /**
  * A to-do list that belongs to a workspace: the small, copyable example of workspace data. With no team active it is
@@ -50,7 +50,7 @@ export function createTodosApi(requireSession: MiddlewareHandler): Hono<TodosEnv
       .orderBy(asc(schema.todo.createdAt))
       .limit(MAX_TODOS_PER_WORKSPACE)
     return c.json({
-      workspace: { teamId: w.teamId, teamName: w.teamName },
+      workspace: { teamId: w.teamId, teamName: w.teamName, canWrite: canWrite(w) },
       todos: rows.map((r) => ({
         id: r.id,
         title: r.title,
@@ -64,6 +64,8 @@ export function createTodosApi(requireSession: MiddlewareHandler): Hono<TodosEnv
 
   todos.post('/', zValidator('json', addSchema), async (c) => {
     const w = await workspaceOf(c.var.db, c.var.userId, c.var.sessionId)
+    if (!canWrite(w))
+      throw new HTTPException(403, { message: 'Viewers can read this list but not change it' })
     const [have] = await c.var.db
       .select({ n: count() })
       .from(schema.todo)
@@ -86,6 +88,8 @@ export function createTodosApi(requireSession: MiddlewareHandler): Hono<TodosEnv
   // Tick or untick. Any member of the workspace may do this.
   todos.patch('/:id', zValidator('json', doneSchema), async (c) => {
     const w = await workspaceOf(c.var.db, c.var.userId, c.var.sessionId)
+    if (!canWrite(w))
+      throw new HTTPException(403, { message: 'Viewers can read this list but not change it' })
     const changed = await c.var.db
       .update(schema.todo)
       .set({ done: c.req.valid('json').done })
@@ -98,6 +102,8 @@ export function createTodosApi(requireSession: MiddlewareHandler): Hono<TodosEnv
 
   todos.delete('/:id', async (c) => {
     const w = await workspaceOf(c.var.db, c.var.userId, c.var.sessionId)
+    if (!canWrite(w))
+      throw new HTTPException(403, { message: 'Viewers can read this list but not change it' })
     const [row] = await c.var.db
       .select({ userId: schema.todo.userId })
       .from(schema.todo)
