@@ -71,6 +71,15 @@ const edits = {
     s.replace(/^# .*$/m, `# ${title}`).replaceAll(`${oldOwner}/${oldName}`, `${owner}/${name}`),
   'docs/releasing/checks-and-security.md': (s) =>
     s.replaceAll(`${oldOwner}/${oldName}`, `${owner}/${name}`),
+  // The docs site: its title, the "edit this page" and GitHub links, and the home page heading.
+  'apps/docs/astro.config.mjs': (s) =>
+    s.replaceAll(`${oldOwner}/${oldName}`, `${owner}/${name}`).replaceAll(oldTitle, title),
+  'apps/docs/scripts/sync-lib.mjs': (s) =>
+    s.replaceAll(`${oldOwner}/${oldName}`, `${owner}/${name}`),
+  'apps/docs/src/components/Footer.astro': (s) =>
+    s.replaceAll(`${oldOwner}/${oldName}`, `${owner}/${name}`),
+  'apps/docs/src/content/docs/index.mdx': (s) => s.replaceAll(oldTitle, title),
+  'docs/desktop/window-and-menus.md': (s) => s.replaceAll(`${oldName}://`, `${name}://`),
   LICENSE: (s) => s.replace(/Copyright \(c\) (\d{4}) .*/, `Copyright (c) $1 ${owner}`)
 }
 
