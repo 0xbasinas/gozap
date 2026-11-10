@@ -3,6 +3,7 @@ import { cn } from '@repo/ui'
 import { Link, NavLink, Outlet } from 'react-router'
 import { SITE_NAME } from '../config'
 import { authClient } from '../lib/auth'
+import { ImpersonationBanner } from './ImpersonationBanner'
 
 const link = ({ isActive }: { isActive: boolean }): string =>
   cn(
@@ -12,28 +13,9 @@ const link = ({ isActive }: { isActive: boolean }): string =>
 
 export function Layout(): JSX.Element {
   const { data: session } = authClient.useSession()
-  const impersonating = Boolean(
-    (session?.session as { impersonatedBy?: string | null } | undefined)?.impersonatedBy
-  )
   return (
     <div className="flex min-h-screen flex-col">
-      {impersonating && (
-        <div
-          role="status"
-          className="flex items-center justify-center gap-3 bg-muted px-4 py-2 text-sm"
-        >
-          You are signed in as {session?.user.email} to help them.
-          <button
-            type="button"
-            className="underline"
-            onClick={() =>
-              void authClient.admin.stopImpersonating().then(() => window.location.assign('/admin'))
-            }
-          >
-            Stop
-          </button>
-        </div>
-      )}
+      <ImpersonationBanner />
       <header className="border-b border-border">
         <nav className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
           <NavLink to="/" className="font-semibold" end>
@@ -49,32 +31,13 @@ export function Layout(): JSX.Element {
             <NavLink to="/app" className={link}>
               Open web app
             </NavLink>
-            {['admin', 'support'].includes(
-              (session?.user as { role?: string | null } | undefined)?.role ?? ''
-            ) && (
-              <NavLink to="/admin" className={link}>
-                Admin
-              </NavLink>
-            )}
-            {session && (
-              <NavLink to="/teams" className={link}>
-                Teams
-              </NavLink>
-            )}
-            {session && (
-              <NavLink to="/account" className={link}>
-                Account
-              </NavLink>
-            )}
-            {session ? (
-              <button
-                type="button"
-                className="text-sm text-muted-foreground transition-colors hover:text-foreground"
-                onClick={() => void authClient.signOut()}
-              >
-                Sign out
-              </button>
-            ) : (
+            <a
+              href="/docs/"
+              className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+            >
+              Docs
+            </a>
+            {!session && (
               <NavLink to="/sign-in" className={link}>
                 Sign in
               </NavLink>

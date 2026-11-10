@@ -297,3 +297,28 @@ export const scimGroupMember = sqliteTable(
     index('scim_group_member_user_idx').on(table.scimUserId)
   ]
 )
+
+/**
+ * A to-do item: the template's small example of data that belongs to a workspace (see todos.ts and workspace.ts).
+ * `organizationId` is the team, or null for the author's own ("Personal") list. Both foreign keys cascade: deleting a
+ * team removes its items, deleting an account removes what that person added. Included in the data export.
+ */
+export const todo = sqliteTable(
+  'todo',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    organizationId: text('organization_id').references(() => organization.id, {
+      onDelete: 'cascade'
+    }),
+    title: text('title').notNull(),
+    done: integer('done', { mode: 'boolean' }).notNull().default(false),
+    createdAt: integer('created_at').notNull()
+  },
+  (table) => [
+    index('todo_team_created_idx').on(table.organizationId, table.createdAt),
+    index('todo_user_created_idx').on(table.userId, table.createdAt)
+  ]
+)

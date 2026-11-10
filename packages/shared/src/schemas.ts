@@ -61,6 +61,16 @@ export const accountExportSchema = z.object({
   teams: z
     .array(z.object({ name: z.string(), role: z.string(), joinedAt: z.string() }))
     .default([]),
+  todos: z
+    .array(
+      z.object({
+        team: z.string().nullable(),
+        title: z.string(),
+        done: z.boolean(),
+        createdAt: z.string()
+      })
+    )
+    .default([]),
   directory: z
     .array(
       z.object({

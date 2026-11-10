@@ -1,5 +1,6 @@
 import { lazy, type JSX } from 'react'
 import { Route, Routes } from 'react-router'
+import { AppLayout } from './components/AppLayout'
 import { Layout } from './components/Layout'
 import { HomePage } from './pages/HomePage'
 import { NotFoundPage } from './pages/NotFoundPage'
@@ -13,6 +14,7 @@ const AcceptInvitationPage = lazy(() =>
   import('./pages/AcceptInvitationPage').then((m) => ({ default: m.AcceptInvitationPage }))
 )
 const AdminPage = lazy(() => import('./pages/AdminPage').then((m) => ({ default: m.AdminPage })))
+const TeamPage = lazy(() => import('./pages/TeamPage').then((m) => ({ default: m.TeamPage })))
 const TeamsPage = lazy(() => import('./pages/TeamsPage').then((m) => ({ default: m.TeamsPage })))
 const AppPage = lazy(() => import('./pages/AppPage').then((m) => ({ default: m.AppPage })))
 const CancelDeletionPage = lazy(() =>
@@ -59,17 +61,20 @@ export function App(): JSX.Element {
         <Route path="t/:slug/sign-in" element={<TeamSignInPage />} />
         <Route path="consent" element={<ConsentPage />} />
         <Route path="device" element={<DevicePage />} />
-        <Route path="admin" element={<AdminPage />} />
-        <Route path="teams" element={<TeamsPage />} />
         <Route path="accept-invitation/:id" element={<AcceptInvitationPage />} />
+        <Route path="auth/desktop" element={<DesktopCallbackPage />} />
+        <Route path="*" element={<NotFoundPage />} />
+      </Route>
+      {/* The web version of the product. Everything under /app is handled client-side. */}
+      <Route element={<AppLayout />}>
+        <Route path="app/*" element={<AppPage />} />
+        <Route path="teams" element={<TeamsPage />} />
+        <Route path="teams/:slug" element={<TeamPage />} />
+        <Route path="admin" element={<AdminPage />} />
         <Route path="account" element={<AccountPage />} />
         <Route path="account/cancel-deletion" element={<CancelDeletionPage />} />
         <Route path="account/privacy" element={<PrivacyPage />} />
         <Route path="account/confirm-email" element={<ConfirmEmailPage />} />
-        <Route path="auth/desktop" element={<DesktopCallbackPage />} />
-        {/* The web version of the product. Everything under /app is handled client-side. */}
-        <Route path="app/*" element={<AppPage />} />
-        <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>
   )

@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -6,7 +6,10 @@ import { App } from './App'
 
 // The auth client talks to the network; replace it with a controllable fake.
 const auth = vi.hoisted(() => ({
-  session: null as null | { user: { email: string } },
+  session: null as null | {
+    user: { email: string }
+    session?: { activeOrganizationId?: string | null }
+  },
   pending: false,
   magicLink: vi.fn(),
   apiKey: { list: vi.fn(), create: vi.fn(), delete: vi.fn() },
@@ -20,6 +23,9 @@ const auth = vi.hoisted(() => ({
   },
   organization: {
     list: vi.fn(),
+    update: vi.fn(),
+    updateMemberRole: vi.fn(),
+    setActive: vi.fn(),
     create: vi.fn(),
     getFullOrganization: vi.fn(),
     inviteMember: vi.fn(),
@@ -106,6 +112,8 @@ vi.mock('./lib/api', () => ({
 beforeEach(() => {
   auth.session = null
   auth.pending = false
+  auth.organization.list.mockReset().mockResolvedValue({ data: [], error: null })
+  auth.organization.setActive.mockReset().mockResolvedValue({ data: {}, error: null })
   auth.magicLink.mockReset().mockResolvedValue({ data: {}, error: null })
   auth.transfer.mockReset().mockResolvedValue({ data: {}, error: null })
   auth.ensureRedirect.mockClear()
@@ -944,6 +952,7 @@ describe('teams', () => {
   const team = {
     id: 't1',
     name: 'Acme',
+    slug: 'acme',
     members: [
       { id: 'm1', userId: 'u1', role: 'owner', user: { email: 'me@example.com', name: 'Me' } },
       { id: 'm2', userId: 'u2', role: 'member', user: { email: 'mate@example.com', name: 'Mate' } }
@@ -952,7 +961,10 @@ describe('teams', () => {
   }
   beforeEach(() => {
     auth.session = { user: { email: 'me@example.com', id: 'u1' } } as never
-    auth.organization.list.mockResolvedValue({ data: [{ id: 't1', name: 'Acme' }], error: null })
+    auth.organization.list.mockResolvedValue({
+      data: [{ id: 't1', name: 'Acme', slug: 'acme' }],
+      error: null
+    })
     auth.organization.getFullOrganization.mockResolvedValue({ data: team, error: null })
     auth.organization.create.mockResolvedValue({ data: {}, error: null })
     auth.organization.inviteMember.mockResolvedValue({ data: {}, error: null })
@@ -969,10 +981,9 @@ describe('teams', () => {
     )
   })
 
-  it('lets an owner invite and remove people', async () => {
-    at('/teams')
-    await userEvent.click(await screen.findByRole('button', { name: 'Open' }))
-    const section = await screen.findByRole('region', { name: 'Team Acme' })
+  it('lets an owner invite and remove people on the team page', async () => {
+    at('/teams/acme')
+    const section = await screen.findByRole('region', { name: 'People' })
     await userEvent.type(within(section).getByLabelText('Email to invite'), 'friend@example.com')
     await userEvent.click(within(section).getByRole('button', { name: 'Send invitation' }))
     expect(auth.organization.inviteMember).toHaveBeenCalledWith({
@@ -980,21 +991,171 @@ describe('teams', () => {
       role: 'member',
       organizationId: 't1'
     })
-    await userEvent.click(within(section).getByRole('button', { name: 'Remove' }))
+    await userEvent.click(within(section).getByRole('button', { name: 'Remove mate@example.com' }))
     expect(auth.organization.removeMember).toHaveBeenCalledWith({
       memberIdOrEmail: 'm2',
       organizationId: 't1'
     })
   })
 
-  it('shows a plain member no way to invite or remove', async () => {
+  it('shows a plain member no way to invite, remove or change settings', async () => {
     auth.session = { user: { email: 'mate@example.com', id: 'u2' } } as never
-    at('/teams')
-    await userEvent.click(await screen.findByRole('button', { name: 'Open' }))
-    const section = await screen.findByRole('region', { name: 'Team Acme' })
+    at('/teams/acme')
+    const section = await screen.findByRole('region', { name: 'People' })
     expect(within(section).queryByLabelText('Email to invite')).not.toBeInTheDocument()
-    expect(within(section).queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument()
-    expect(within(section).getByRole('button', { name: 'Leave team' })).toBeInTheDocument()
+    expect(within(section).queryByRole('button', { name: /^Remove / })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Team settings' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Leave team' })).toBeInTheDocument()
+  })
+
+  it('lets an owner rename the team and hand over ownership', async () => {
+    auth.organization.update.mockResolvedValue({ data: {}, error: null })
+    auth.organization.updateMemberRole.mockResolvedValue({ data: {}, error: null })
+    at('/teams/acme')
+    await userEvent.type(await screen.findByLabelText('New team name'), 'Acme Inc')
+    await userEvent.click(screen.getByRole('button', { name: 'Rename team' }))
+    expect(auth.organization.update).toHaveBeenCalledWith({
+      data: { name: 'Acme Inc' },
+      organizationId: 't1'
+    })
+    await userEvent.click(screen.getByRole('button', { name: 'Make mate@example.com an owner' }))
+    expect(auth.organization.updateMemberRole).toHaveBeenCalledWith({
+      memberId: 'm2',
+      role: 'owner',
+      organizationId: 't1'
+    })
+    // The only owner cannot leave until someone else is an owner.
+    expect(screen.queryByRole('button', { name: 'Leave team' })).not.toBeInTheDocument()
+  })
+
+  it('deletes a team only after its name is typed', async () => {
+    auth.organization.delete.mockResolvedValue({ data: {}, error: null })
+    at('/teams/acme')
+    const button = await screen.findByRole('button', { name: 'Delete team' })
+    expect(button).toBeDisabled()
+    await userEvent.type(screen.getByLabelText('Type the team name to confirm'), 'Acme')
+    expect(button).toBeEnabled()
+    await userEvent.click(button)
+    expect(auth.organization.delete).toHaveBeenCalledWith({ organizationId: 't1' })
+  })
+
+  it('makes a team the workspace from the list, and opens its page', async () => {
+    at('/teams')
+    await userEvent.click(await screen.findByRole('button', { name: 'Use Acme as workspace' }))
+    expect(auth.organization.setActive).toHaveBeenCalledWith({ organizationId: 't1' })
+    expect(screen.getByRole('link', { name: 'Open Acme' })).toHaveAttribute('href', '/teams/acme')
+  })
+})
+
+describe('the app bar and workspaces', () => {
+  beforeEach(() => {
+    auth.session = {
+      user: { email: 'me@example.com', id: 'u1' },
+      session: { activeOrganizationId: null }
+    } as never
+    auth.organization.list.mockResolvedValue({
+      data: [
+        { id: 't1', name: 'Acme' },
+        { id: 't2', name: 'Beta' }
+      ],
+      error: null
+    })
+  })
+
+  it('shows the workspace switcher, page tabs and an account menu inside /app', async () => {
+    at('/app')
+    expect(await screen.findByRole('button', { name: 'Switch workspace' })).toHaveTextContent(
+      'Personal'
+    )
+    const tabs = screen.getByRole('navigation', { name: 'App' })
+    expect(within(tabs).getByRole('link', { name: 'Teams' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Releases' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+    expect(screen.getByRole('menuitem', { name: 'Sign out' })).toBeInTheDocument()
+  })
+
+  it('switches workspace and back to personal', async () => {
+    at('/app')
+    await userEvent.click(await screen.findByRole('button', { name: 'Switch workspace' }))
+    await userEvent.click(await screen.findByRole('menuitemradio', { name: 'Beta' }))
+    expect(auth.organization.setActive).toHaveBeenCalledWith({ organizationId: 't2' })
+    await userEvent.click(screen.getByRole('button', { name: 'Switch workspace' }))
+    await userEvent.click(screen.getByRole('menuitemradio', { name: /Personal/ }))
+    expect(auth.organization.setActive).toHaveBeenLastCalledWith({ organizationId: null })
+  })
+
+  it('names the active team and lets a team be made the workspace from the Teams page', async () => {
+    auth.session = {
+      user: { email: 'me@example.com', id: 'u1' },
+      session: { activeOrganizationId: 't1' }
+    } as never
+    at('/app')
+    expect(await screen.findByRole('button', { name: 'Switch workspace' })).toHaveTextContent(
+      'Acme'
+    )
+    expect(await screen.findByText('Manage this team')).toBeInTheDocument()
+    cleanup()
+    at('/teams')
+    await userEvent.click(await screen.findByRole('button', { name: 'Use Beta as workspace' }))
+    expect(auth.organization.setActive).toHaveBeenCalledWith({ organizationId: 't2' })
+    expect(screen.getByText('Active workspace')).toBeInTheDocument()
+  })
+
+  it('shows the to-do list of the active workspace, adds, ticks and removes', async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') return new Response('{"id":"n2"}', { status: 201 })
+      if (init?.method) return new Response(null, { status: 204 })
+      return Response.json({
+        workspace: { teamId: null, teamName: null },
+        todos: [
+          { id: 'n1', title: 'buy milk', done: false, author: 'Ada', mine: true, canRemove: true }
+        ]
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    at('/app')
+    expect(await screen.findByText('buy milk')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'To-do list: Personal' })).toBeInTheDocument()
+    await userEvent.type(screen.getByLabelText('New to-do'), 'call Bo')
+    await userEvent.click(screen.getByRole('button', { name: 'Add' }))
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/todos',
+        expect.objectContaining({ method: 'POST', body: JSON.stringify({ title: 'call Bo' }) })
+      )
+    )
+    await userEvent.click(screen.getByRole('checkbox'))
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/todos/n1',
+        expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ done: true }) })
+      )
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Remove buy milk' }))
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/todos/n1',
+        expect.objectContaining({ method: 'DELETE' })
+      )
+    )
+  })
+
+  it('returns to the workspace this device used last after signing in again', async () => {
+    localStorage.setItem('workspace', 't2')
+    at('/app')
+    await waitFor(() =>
+      expect(auth.organization.setActive).toHaveBeenCalledWith({ organizationId: 't2' })
+    )
+    // Picking Personal is remembered too, so it is not undone.
+    await userEvent.click(await screen.findByRole('button', { name: 'Switch workspace' }))
+    await userEvent.click(screen.getByRole('menuitemradio', { name: /Personal/ }))
+    expect(localStorage.getItem('workspace')).toBe('')
+  })
+
+  it('keeps the public bar on public pages', async () => {
+    at('/releases')
+    expect(await screen.findByRole('link', { name: 'Open web app' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Switch workspace' })).not.toBeInTheDocument()
   })
 })
 
