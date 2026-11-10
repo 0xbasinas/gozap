@@ -5,6 +5,7 @@ import { SITE_NAME } from '../config'
 import { authClient } from '../lib/auth'
 import { ImpersonationBanner } from './ImpersonationBanner'
 import { Menu, menuItem } from './Menu'
+import { PresenceBeat } from './PresenceBeat'
 import { WorkspaceSwitcher } from './WorkspaceSwitcher'
 
 const tab = ({ isActive }: { isActive: boolean }): string =>
@@ -26,6 +27,7 @@ export function AppLayout(): JSX.Element {
   return (
     <div className="flex min-h-screen flex-col">
       <ImpersonationBanner />
+      {session && <PresenceBeat userId={session.user.id} />}
       <header className="sticky top-0 z-20 border-b border-border bg-background/90 backdrop-blur">
         <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-2">
           <Link to="/app" className="shrink-0 font-semibold">

@@ -77,6 +77,20 @@ export const authenticatedFetch: typeof fetch = (input, init) => {
   return fetch(input, { ...init, headers })
 }
 
+/**
+ * Call one of the API's sign-in routes as the signed-in person, through the Better Auth client (which also keeps its
+ * stored session cookie up to date, unlike a plain fetch). `body` makes it a POST. Returns the answer, or null when the
+ * call failed or answered nothing. Used by the main process only.
+ */
+export async function authCall(path: string, body?: unknown): Promise<unknown> {
+  if (!accountAvailable()) return null
+  const result = await getClient().$fetch(path, {
+    method: body === undefined ? 'GET' : 'POST',
+    ...(body === undefined ? {} : { body: body as Record<string, unknown> })
+  })
+  return result.error ? null : result.data
+}
+
 export async function getAccount(): Promise<Account> {
   if (!accountAvailable()) return { available: false, user: null }
   try {

@@ -176,6 +176,13 @@
       "when": 1794309924881,
       "tag": "0024_flat_absorbing_man",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1794315272117,
+      "tag": "0025_gigantic_black_tom",
+      "breakpoints": true
     }
   ]
 }

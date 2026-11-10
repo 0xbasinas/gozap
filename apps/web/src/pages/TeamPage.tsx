@@ -23,8 +23,17 @@ interface Team {
   id: string
   name: string
   slug: string
+  metadata?: { membersCanInvite?: boolean } | string | null
   members: Member[]
   invitations: Invite[]
+}
+
+const safeJson = (text: string): { membersCanInvite?: boolean } => {
+  try {
+    return JSON.parse(text) as { membersCanInvite?: boolean }
+  } catch {
+    return {}
+  }
 }
 
 const day = (value: string | Date | undefined): string =>
@@ -43,7 +52,10 @@ export function TeamPage(): JSX.Element {
   const [rename, setRename] = useState('')
   const [typed, setTyped] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [inviteRole, setInviteRole] = useState('member')
   const [reload, setReload] = useState(0)
+  const [online, setOnline] = useState<string[]>([])
+  const [showMe, setShowMe] = useState(false)
 
   useEffect(() => {
     if (!me) return
@@ -57,6 +69,27 @@ export function TeamPage(): JSX.Element {
       cancelled = true
     }
   }, [me, slug, reload])
+
+  const teamId = team?.id
+  useEffect(() => {
+    if (!teamId) return
+    let cancelled = false
+    void fetch(`/api/presence/team/${encodeURIComponent(teamId)}`, { credentials: 'same-origin' })
+      .then(async (r) => (r.ok ? ((await r.json()) as { online: { name: string }[] }).online : []))
+      .catch(() => [])
+      .then((found) => {
+        if (!cancelled) setOnline(found.map((p) => p.name))
+      })
+    void fetch('/api/presence/me', { credentials: 'same-origin' })
+      .then(async (r) => (r.ok ? ((await r.json()) as { visible: boolean }).visible : false))
+      .catch(() => false)
+      .then((visible) => {
+        if (!cancelled) setShowMe(visible)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [teamId, reload])
 
   if (isPending || (session && team === undefined)) return <p role="status">Loading...</p>
   if (!session) return <Navigate to="/sign-in" replace />
@@ -75,6 +108,9 @@ export function TeamPage(): JSX.Element {
   const manages = owns || mine.includes('admin')
   const owners = team.members.filter((m) => m.role.includes('owner')).length
   const active = activeId === team.id
+  const settings =
+    typeof team.metadata === 'string' ? safeJson(team.metadata) : (team.metadata ?? {})
+  const membersCanInvite = settings.membersCanInvite === true
   const pending = team.invitations.filter((i) => i.status === 'pending')
   const feed = [
     ...team.members.map((m) => ({
@@ -101,7 +137,8 @@ export function TeamPage(): JSX.Element {
     await run(
       authClient.organization.inviteMember({
         email: email.trim(),
-        role: 'member',
+        // The client only knows Better Auth's own roles; the server accepts our `viewer` too.
+        role: inviteRole as 'member',
         organizationId: current.id
       })
     )
@@ -153,13 +190,54 @@ export function TeamPage(): JSX.Element {
 
       <section className="space-y-3" aria-label="People">
         <h2 className="text-lg font-semibold">People</h2>
+        <p className="text-sm text-muted-foreground">
+          {online.length > 0
+            ? `Online now: ${online.join(', ')}`
+            : 'Nobody has shown they are online.'}
+        </p>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={showMe}
+            onChange={(e) =>
+              void fetch('/api/presence/me', {
+                method: 'PUT',
+                credentials: 'same-origin',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ visible: e.target.checked })
+              }).then(() => setReload((n) => n + 1))
+            }
+          />
+          Show when I am online to the people in my teams
+        </label>
         <ul className="divide-y divide-border rounded-lg border border-border">
           {team.members.map((m) => (
             <li key={m.id} className="flex items-center justify-between gap-3 p-3 text-sm">
               <span className="min-w-0 truncate">
                 {m.user.email} <span className="text-muted-foreground">({m.role})</span>
               </span>
-              <span className="flex shrink-0 gap-2">
+              <span className="flex shrink-0 items-center gap-2">
+                {manages && m.userId !== me && !m.role.includes('owner') && (
+                  <select
+                    aria-label={`Role for ${m.user.email}`}
+                    value={m.role}
+                    disabled={m.role.includes('admin') && !owns}
+                    onChange={(e) =>
+                      void run(
+                        authClient.organization.updateMemberRole({
+                          memberId: m.id,
+                          role: e.target.value as 'member',
+                          organizationId: team.id
+                        })
+                      )
+                    }
+                    className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+                  >
+                    <option value="viewer">Viewer</option>
+                    <option value="member">Member</option>
+                    {owns && <option value="admin">Admin</option>}
+                  </select>
+                )}
                 {owns && m.userId !== me && !m.role.includes('owner') && (
                   <Button
                     variant="outline"
@@ -225,6 +303,15 @@ export function TeamPage(): JSX.Element {
               onChange={(e) => setEmail(e.target.value)}
               className="h-9 w-full max-w-xs rounded-md border border-input bg-background px-3 text-sm"
             />
+            <select
+              aria-label="Role for the invitation"
+              value={inviteRole}
+              onChange={(e) => setInviteRole(e.target.value)}
+              className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+            >
+              <option value="member">Member</option>
+              <option value="viewer">Viewer</option>
+            </select>
             <Button type="submit" variant="outline">
               Send invitation
             </Button>
@@ -246,6 +333,26 @@ export function TeamPage(): JSX.Element {
         </section>
       )}
 
+      {manages && (
+        <section className="space-y-2" aria-label="Who can invite">
+          <h2 className="text-lg font-semibold">Who can invite</h2>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={membersCanInvite}
+              onChange={(e) =>
+                void run(
+                  authClient.organization.update({
+                    data: { metadata: { membersCanInvite: e.target.checked } },
+                    organizationId: team.id
+                  })
+                )
+              }
+            />
+            Members can invite other people (as members or viewers)
+          </label>
+        </section>
+      )}
       {manages && <SsoAdminSection organizationId={team.id} />}
       {owns && <DirectorySyncSection organizationId={team.id} />}
 

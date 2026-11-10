@@ -7,13 +7,21 @@ import { mcp } from '@better-auth/mcp'
 import { DEVICE_CODE_GRANT_TYPE, oauthDeviceAuthorization } from '@better-auth/oauth-provider'
 import * as Sentry from '@sentry/cloudflare'
 import { betterAuth } from 'better-auth'
-import { count, eq, inArray } from 'drizzle-orm'
+import { and, count, eq, inArray } from 'drizzle-orm'
 import { apiKey } from '@better-auth/api-key'
 import { APIError, createAuthMiddleware, getSessionFromCtx } from 'better-auth/api'
 import { admin, captcha, jwt, magicLink, organization } from 'better-auth/plugins'
 import { ac, roles } from './permissions'
 import { fetchClientMetadataResource } from './cimdFetch'
 import { checkPrivateKey } from './privateKey'
+import {
+  ASSIGNABLE_ROLES,
+  isPlainMember,
+  readTeamSettings,
+  teamAc,
+  teamRoles,
+  teamSettingsSchema
+} from './teamRoles'
 import { openSecret, withEncryptedProviderSecrets } from './secretStore'
 import { eventForCall, recordAudit } from './audit'
 import type { Db } from './db'
@@ -215,6 +223,54 @@ export function createAuth({ db, env, email, waitUntil }: AuthDeps) {
               })
             }
           }
+        }
+        // A team keeps only the settings we know about, so its `metadata` cannot be used to store anything else.
+        if (ctx.path === '/organization/update' || ctx.path === '/organization/create') {
+          const body = ctx.body as { data?: { metadata?: unknown }; metadata?: unknown } | undefined
+          const metadata =
+            ctx.path === '/organization/update' ? body?.data?.metadata : body?.metadata
+          if (metadata !== undefined && !teamSettingsSchema.safeParse(metadata).success)
+            throw new APIError('BAD_REQUEST', { message: 'That team setting is not recognised.' })
+        }
+        // Who may invite: owners and admins always. A plain member only when the team has switched that on, and then
+        // only as a member or viewer, never as someone with more say than themselves.
+        if (ctx.path === '/organization/invite-member') {
+          const session = ctx.context.session ?? (await getSessionFromCtx(ctx))
+          const body = ctx.body as { organizationId?: string; role?: unknown } | undefined
+          const teamId = body?.organizationId ?? session?.session.activeOrganizationId
+          if (session && teamId) {
+            const [seat] = await db
+              .select({ role: schema.member.role, metadata: schema.organization.metadata })
+              .from(schema.member)
+              .innerJoin(
+                schema.organization,
+                eq(schema.organization.id, schema.member.organizationId)
+              )
+              .where(
+                and(
+                  eq(schema.member.organizationId, teamId),
+                  eq(schema.member.userId, session.user.id)
+                )
+              )
+            if (seat && isPlainMember(seat.role)) {
+              if (!readTeamSettings(seat.metadata).membersCanInvite)
+                throw new APIError('FORBIDDEN', {
+                  message: 'Only owners and admins can invite people to this team.'
+                })
+              const wanted = Array.isArray(body?.role) ? body.role : [body?.role ?? 'member']
+              if (!wanted.every((r) => r === 'member' || r === 'viewer'))
+                throw new APIError('FORBIDDEN', {
+                  message: 'You can invite people as members or viewers only.'
+                })
+            }
+          }
+        }
+        // Only the kinds of role we define can be handed out; an owner is made with its own step, never by an invitation.
+        if (ctx.path === '/organization/invite-member') {
+          const role = (ctx.body as { role?: unknown } | undefined)?.role
+          const roles = Array.isArray(role) ? role : role === undefined ? [] : [role]
+          if (!roles.every((r) => (ASSIGNABLE_ROLES as readonly unknown[]).includes(r)))
+            throw new APIError('BAD_REQUEST', { message: 'Choose admin, member or viewer.' })
         }
         // Signing in to the company's token endpoint with a private key instead of a shared secret: the pasted key (it
         // travels in the `clientSecret` field, which is stored encrypted) must be a real PKCS#8 key for the chosen method.
@@ -497,6 +553,8 @@ export function createAuth({ db, env, email, waitUntil }: AuthDeps) {
       }),
       // Teams: people who share a workspace. Anyone may start up to MAX_TEAMS_PER_PERSON; the owner invites by email.
       organization({
+        ac: teamAc,
+        roles: teamRoles,
         organizationLimit: MAX_TEAMS_PER_PERSON,
         membershipLimit: MAX_MEMBERS_PER_TEAM,
         invitationExpiresIn: INVITATION_DAYS * 86_400,

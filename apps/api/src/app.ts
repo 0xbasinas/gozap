@@ -58,6 +58,7 @@ import { listRequests, openRequest } from './dataRequests'
 import { recentSignIns } from './signIns'
 import { recentAudit, recordAudit } from './audit'
 import { teamsOf } from './teams'
+import { createPresenceApi, presenceOf } from './presence'
 import { createTodosApi, todosOf } from './todos'
 import { createWorkspaceApi } from './workspace'
 import { createScimAdmin, createScimApi } from './scimRoutes'
@@ -385,6 +386,7 @@ export function createApp(options: AppOptions = {}) {
         securityActivity: await recentAudit(c.var.db, c.var.userId),
         teams: await teamsOf(c.var.db, c.var.userId),
         todos: await todosOf(c.var.db, c.var.userId),
+        presence: await presenceOf(c.var.db, c.var.userId),
         // What a company directory (SCIM) says about this person, per team.
         directory: await c.var.db
           .select({
@@ -844,6 +846,7 @@ export function createApp(options: AppOptions = {}) {
       .route('/scim-connections', createScimAdmin(requireSession(true)))
       .route('/workspace', createWorkspaceApi(requireSession(true)))
       .route('/todos', createTodosApi(requireSession(true)))
+      .route('/presence', createPresenceApi(requireSession(true)))
       .route('/preferences', preferences)
       .route('/devices', devices)
       .route('/feedback', feedback)

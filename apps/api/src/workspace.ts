@@ -37,6 +37,15 @@ export async function workspaceOf(db: Db, userId: string, sessionId: string): Pr
   return seat ? { teamId: row.teamId, teamName: seat.name, role: seat.role } : PERSONAL
 }
 
+/** A viewer reads the workspace but changes nothing, unless they also hold a stronger role. */
+export const canWrite = (w: Workspace): boolean =>
+  !w.teamId ||
+  !w.role
+    .split(',')
+    .map((r) => r.trim())
+    .includes('viewer') ||
+  managesTeam(w)
+
 /** Does the role include owner or admin? (A person can hold several roles, written "owner,admin".) */
 export const managesTeam = (w: Workspace): boolean =>
   w.role.includes('owner') || w.role.includes('admin')

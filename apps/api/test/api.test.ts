@@ -1902,6 +1902,178 @@ describe('workspace to-do list', () => {
   })
 })
 
+describe('team roles, who can invite, and who is online', () => {
+  const json = { 'content-type': 'application/json' }
+  const org = (s: ReturnType<typeof setup>, cookie: string, path: string, body: unknown) =>
+    s.call(`/api/auth/organization/${path}`, {
+      method: 'POST',
+      headers: { cookie, ...json },
+      body: JSON.stringify(body)
+    })
+  const put = (s: ReturnType<typeof setup>, cookie: string, path: string, body: unknown) =>
+    s.call(path, { method: 'PUT', headers: { cookie, ...json }, body: JSON.stringify(body) })
+  const setWorkspace = (email: string, teamId: string | null) =>
+    bindings.DB.prepare(
+      'UPDATE session SET active_organization_id = ? WHERE user_id = (SELECT id FROM user WHERE email = ?)'
+    )
+      .bind(teamId, email)
+      .run()
+  /** An owner, a team, and a second person who joined it with `role`. */
+  async function teamWith(s: ReturnType<typeof setup>, tag: string, role: 'member' | 'viewer') {
+    const owner = await signIn(s, `${tag}-owner@example.com`)
+    const team = (await (
+      await org(s, owner, 'create', { name: 'Acme', slug: `acme-${tag}` })
+    ).json()) as { id: string }
+    const before = s.sent.length
+    const invited = await org(s, owner, 'invite-member', {
+      email: `${tag}-mate@example.com`,
+      role,
+      organizationId: team.id
+    })
+    expect(invited.status).toBe(200)
+    const id = /accept-invitation\/([\w-]+)/.exec(s.sent[before]!.text)![1]!
+    const mate = await signIn(s, `${tag}-mate@example.com`)
+    expect((await org(s, mate, 'accept-invitation', { invitationId: id })).status).toBe(200)
+    return { owner, mate, team, mateEmail: `${tag}-mate@example.com` }
+  }
+
+  it('a plain member cannot invite until the team switches it on, and then only as member or viewer', async () => {
+    const s = setup()
+    const { owner, mate, team } = await teamWith(s, 'inv', 'member')
+    const invite = (role: string) =>
+      org(s, mate, 'invite-member', {
+        email: `third-${role}@example.com`,
+        role,
+        organizationId: team.id
+      })
+    expect((await invite('member')).status).toBe(403)
+
+    const on = await org(s, owner, 'update', {
+      data: { metadata: { membersCanInvite: true } },
+      organizationId: team.id
+    })
+    expect(on.status).toBe(200)
+    expect((await invite('member')).status).toBe(200)
+    expect((await invite('viewer')).status).toBe(200)
+    expect((await invite('admin')).status).toBe(403)
+
+    // Switching it off again closes the door.
+    await org(s, owner, 'update', {
+      data: { metadata: { membersCanInvite: false } },
+      organizationId: team.id
+    })
+    expect((await invite('member')).status).toBe(403)
+  })
+
+  it('refuses unknown team settings and invitations for owners', async () => {
+    const s = setup()
+    const { owner, team } = await teamWith(s, 'set', 'member')
+    const bad = await org(s, owner, 'update', {
+      data: { metadata: { anything: 'else' } },
+      organizationId: team.id
+    })
+    expect(bad.status).toBe(400)
+    const asOwner = await org(s, owner, 'invite-member', {
+      email: 'x@example.com',
+      role: 'owner',
+      organizationId: team.id
+    })
+    expect(asOwner.status).toBe(400)
+  })
+
+  it('a viewer can read the team to-do list but not change it, until promoted', async () => {
+    const s = setup()
+    const { owner, mate, team, mateEmail } = await teamWith(s, 'view', 'viewer')
+    await s.call('/api/todos', {
+      method: 'POST',
+      headers: { cookie: owner, ...json },
+      body: JSON.stringify({ title: 'team item' })
+    })
+    await setWorkspace(mateEmail, team.id)
+    const view = (await (await s.call('/api/todos', { headers: { cookie: mate } })).json()) as {
+      workspace: { canWrite: boolean }
+      todos: { id: string; title: string }[]
+    }
+    expect(view.todos.map((t) => t.title)).toEqual(['team item'])
+    expect(view.workspace.canWrite).toBe(false)
+    const add = await s.call('/api/todos', {
+      method: 'POST',
+      headers: { cookie: mate, ...json },
+      body: JSON.stringify({ title: 'nope' })
+    })
+    expect(add.status).toBe(403)
+    const tick = await s.call(`/api/todos/${view.todos[0]!.id}`, {
+      method: 'PATCH',
+      headers: { cookie: mate, ...json },
+      body: JSON.stringify({ done: true })
+    })
+    expect(tick.status).toBe(403)
+
+    // Make them a plain member and they can write.
+    const row = await bindings.DB.prepare(
+      'SELECT id FROM member WHERE user_id = (SELECT id FROM user WHERE email = ?) AND organization_id = ?'
+    )
+      .bind(mateEmail, team.id)
+      .first<{ id: string }>()
+    const promoted = await org(s, owner, 'update-member-role', {
+      memberId: row!.id,
+      role: 'member',
+      organizationId: team.id
+    })
+    expect(promoted.status).toBe(200)
+    const ok = await s.call('/api/todos', {
+      method: 'POST',
+      headers: { cookie: mate, ...json },
+      body: JSON.stringify({ title: 'now allowed' })
+    })
+    expect(ok.status).toBe(201)
+  })
+
+  it('online presence is opt-in, limited to a shared team, and forgotten when switched off', async () => {
+    const s = setup()
+    const { owner, mate, team } = await teamWith(s, 'pres', 'member')
+    const online = async (cookie: string, id = team.id) =>
+      s.call(`/api/presence/team/${id}`, { headers: { cookie } })
+    const names = async (cookie: string) =>
+      ((await (await online(cookie)).json()) as { online: { userId: string }[] }).online.length
+
+    expect(await (await s.call('/api/presence/me', { headers: { cookie: owner } })).json()).toEqual(
+      {
+        visible: false
+      }
+    )
+    // Pinging before opting in records nothing.
+    expect(
+      (await s.call('/api/presence/ping', { method: 'POST', headers: { cookie: owner } })).status
+    ).toBe(204)
+    expect(await names(mate)).toBe(0)
+
+    await put(s, owner, '/api/presence/me', { visible: true })
+    await s.call('/api/presence/ping', { method: 'POST', headers: { cookie: owner } })
+    expect(await names(mate)).toBe(1)
+
+    // Somebody outside the team gets a plain not-found.
+    const stranger = await signIn(s, 'pres-stranger@example.com')
+    expect((await online(stranger)).status).toBe(404)
+
+    // The export carries the setting; switching off forgets the last-seen time.
+    const exported = (await (
+      await s.call('/api/account/export', { headers: { cookie: owner } })
+    ).json()) as {
+      presence: { visible: boolean; lastSeenAt: string | null } | null
+    }
+    expect(exported.presence?.visible).toBe(true)
+    await put(s, owner, '/api/presence/me', { visible: false })
+    expect(await names(mate)).toBe(0)
+    const after = (await (
+      await s.call('/api/account/export', { headers: { cookie: owner } })
+    ).json()) as {
+      presence: { lastSeenAt: string | null } | null
+    }
+    expect(after.presence?.lastSeenAt).toBeNull()
+  })
+})
+
 describe('single sign-on (OpenID Connect)', () => {
   const json = { 'content-type': 'application/json' }
   const provider = (providerId: string, extra: Record<string, unknown> = {}): string =>

@@ -1039,6 +1039,59 @@ describe('teams', () => {
     expect(auth.organization.delete).toHaveBeenCalledWith({ organizationId: 't1' })
   })
 
+  it('lets an owner give someone the viewer role and invite a viewer', async () => {
+    auth.organization.updateMemberRole.mockResolvedValue({ data: {}, error: null })
+    at('/teams/acme')
+    await userEvent.selectOptions(
+      await screen.findByLabelText('Role for mate@example.com'),
+      'viewer'
+    )
+    expect(auth.organization.updateMemberRole).toHaveBeenCalledWith({
+      memberId: 'm2',
+      role: 'viewer',
+      organizationId: 't1'
+    })
+    await userEvent.selectOptions(screen.getByLabelText('Role for the invitation'), 'viewer')
+    await userEvent.type(screen.getByLabelText('Email to invite'), 'eye@example.com')
+    await userEvent.click(screen.getByRole('button', { name: 'Send invitation' }))
+    expect(auth.organization.inviteMember).toHaveBeenCalledWith({
+      email: 'eye@example.com',
+      role: 'viewer',
+      organizationId: 't1'
+    })
+  })
+
+  it('switches on "members can invite" for the team', async () => {
+    auth.organization.update.mockResolvedValue({ data: {}, error: null })
+    at('/teams/acme')
+    await userEvent.click(await screen.findByLabelText(/Members can invite other people/))
+    expect(auth.organization.update).toHaveBeenCalledWith({
+      data: { metadata: { membersCanInvite: true } },
+      organizationId: 't1'
+    })
+  })
+
+  it('shows who is online and lets a person opt in', async () => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.startsWith('/api/presence/team/'))
+        return Response.json({ online: [{ userId: 'u2', name: 'Mate' }] })
+      if (url === '/api/presence/me' && init?.method === 'PUT')
+        return Response.json({ visible: true })
+      if (url === '/api/presence/me') return Response.json({ visible: false })
+      return new Response(null, { status: 204 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    at('/teams/acme')
+    expect(await screen.findByText('Online now: Mate')).toBeInTheDocument()
+    await userEvent.click(screen.getByLabelText('Show when I am online to the people in my teams'))
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/presence/me',
+        expect.objectContaining({ method: 'PUT', body: JSON.stringify({ visible: true }) })
+      )
+    )
+  })
+
   it('makes a team the workspace from the list, and opens its page', async () => {
     at('/teams')
     await userEvent.click(await screen.findByRole('button', { name: 'Use Acme as workspace' }))
@@ -1138,6 +1191,31 @@ describe('the app bar and workspaces', () => {
         expect.objectContaining({ method: 'DELETE' })
       )
     )
+  })
+
+  it('shows a viewer the team list without the way to change it', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({
+          workspace: { teamId: 't1', teamName: 'Acme', canWrite: false },
+          todos: [
+            {
+              id: 'n1',
+              title: 'read only',
+              done: false,
+              author: 'Ada',
+              mine: false,
+              canRemove: false
+            }
+          ]
+        })
+      )
+    )
+    at('/app')
+    expect(await screen.findByText('read only')).toBeInTheDocument()
+    expect(screen.getByText('You can read this list but not change it.')).toBeInTheDocument()
+    expect(screen.getByRole('checkbox')).toBeDisabled()
   })
 
   it('returns to the workspace this device used last after signing in again', async () => {

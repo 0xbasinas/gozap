@@ -27,6 +27,7 @@ export function TodosSection({
   workspaceName: string
 }): JSX.Element {
   const [todos, setTodos] = useState<Todo[] | null>(null)
+  const [canWrite, setCanWrite] = useState(true)
   const [title, setTitle] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [reload, setReload] = useState(0)
@@ -35,11 +36,15 @@ export function TodosSection({
     let cancelled = false
     void fetch('/api/todos', { credentials: 'same-origin' })
       .then(async (response) =>
-        response.ok ? ((await response.json()) as { todos: Todo[] }).todos : null
+        response.ok
+          ? ((await response.json()) as { todos: Todo[]; workspace: { canWrite: boolean } })
+          : null
       )
       .catch(() => null)
       .then((found) => {
-        if (!cancelled) setTodos(found)
+        if (cancelled) return
+        setTodos(found?.todos ?? null)
+        setCanWrite(found?.workspace.canWrite ?? true)
       })
     return () => {
       cancelled = true
@@ -67,7 +72,10 @@ export function TodosSection({
   return (
     <section aria-label="To-do list" className="space-y-3">
       <h2 className="text-lg font-semibold">To-do list: {workspaceName}</h2>
-      <form onSubmit={(e) => void add(e)} className="flex gap-2">
+      {!canWrite && (
+        <p className="text-sm text-muted-foreground">You can read this list but not change it.</p>
+      )}
+      <form onSubmit={(e) => void add(e)} className="flex gap-2" hidden={!canWrite}>
         <input
           aria-label="New to-do"
           placeholder={
@@ -95,6 +103,7 @@ export function TodosSection({
               <label className="flex min-w-0 items-center gap-2">
                 <input
                   type="checkbox"
+                  disabled={!canWrite}
                   checked={t.done}
                   onChange={(e) =>
                     void send(`/${encodeURIComponent(t.id)}`, {
@@ -111,7 +120,7 @@ export function TodosSection({
                 </span>
                 {!t.mine && <span className="text-xs text-muted-foreground">{t.author}</span>}
               </label>
-              {t.canRemove && (
+              {canWrite && t.canRemove && (
                 <Button
                   variant="outline"
                   size="sm"
