@@ -40,7 +40,7 @@ Each release includes `SHA256SUMS.txt` and signed build-provenance attestations.
 
 ```bash
 sha256sum -c SHA256SUMS.txt --ignore-missing
-gh attestation verify <downloaded-file> --repo 0xbasinas/electron-desktop-template
+gh attestation verify <downloaded-file> --repo 0xbasinas/gozap
 ```
 
 The attestation proves the file was built by this repo's workflow from the tagged commit.
