@@ -78,3 +78,23 @@ export function soloTeamsDeletion(db: Db, userId: string) {
       and(inArray(schema.organization.id, mine), sql`${schema.organization.id} not in ${shared}`)
     )
 }
+
+/**
+ * A team's company sign-in belongs to the team, but the row also names whoever registered it, and deleting that
+ * person's account would delete the row with it (foreign key). Hand each such provider to another owner or admin of
+ * the team first. Providers with nobody to hand to are left to the cascade. Run before the account deletion.
+ */
+export function handOverProvidersStatement(db: Db, userId: string) {
+  const successor = sql`(select m.user_id from member m where m.organization_id = sso_provider.organization_id
+    and m.user_id <> ${userId} and m.role in ('owner', 'admin') order by (m.role = 'owner') desc, m.created_at limit 1)`
+  return db
+    .update(schema.ssoProvider)
+    .set({ userId: successor })
+    .where(
+      and(
+        eq(schema.ssoProvider.userId, userId),
+        sql`${schema.ssoProvider.organizationId} is not null`,
+        sql`${successor} is not null`
+      )
+    )
+}

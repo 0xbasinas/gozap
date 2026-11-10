@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
 import * as Sentry from '@sentry/cloudflare'
 import {
@@ -22,11 +23,16 @@ import {
   type Account,
   type AccountExport
 } from '@repo/shared'
-import { and, count, eq, gt, ne } from 'drizzle-orm'
+import { and, count, eq, gt, inArray, ne } from 'drizzle-orm'
 import { Hono, type MiddlewareHandler } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import { secureHeaders } from 'hono/secure-headers'
-import { createAuth, DEFAULT_APP_NAME, type Auth } from './auth'
+import { createMcpProtectedRequestHandler } from '@better-auth/mcp'
+import { createDpopReplayStore } from 'better-auth/oauth2'
+import { createAuth, DEFAULT_APP_NAME, MCP_READ_SCOPE, mcpResource, type Auth } from './auth'
+import { handleMcp } from './mcpServer'
+import { isAiAppDisabled, listAiApps, setAiAppDisabledStatements } from './aiApps'
+import { cachedJwks } from './jwksCache'
 import {
   cancelDeletion,
   cancelDeletionWithToken,
@@ -52,6 +58,8 @@ import { listRequests, openRequest } from './dataRequests'
 import { recentSignIns } from './signIns'
 import { recentAudit, recordAudit } from './audit'
 import { teamsOf } from './teams'
+import { createScimAdmin, createScimApi } from './scimRoutes'
+import { DiscoveryError, discoverIssuer } from './ssoDiscovery'
 import { isSuppressed, suppress, suppressionsFrom } from './suppression'
 
 type Variables = { auth: Auth; db: Db; userId: string; sessionId: string }
@@ -89,10 +97,27 @@ const requireSession =
       .where(eq(schema.session.id, session.session.id))
     const suspended = live?.banned && (!live.banExpires || live.banExpires.getTime() > Date.now())
     if (!live || suspended) throw new HTTPException(401, { message: 'Sign in first' })
+    // Staff who impersonate a person may look, not act as them: no changes, and no export of their data.
+    const impersonating = (session.session as { impersonatedBy?: string | null }).impersonatedBy
+    if (
+      impersonating &&
+      (!['GET', 'HEAD'].includes(c.req.method) || c.req.path.endsWith('/export'))
+    )
+      throw new HTTPException(403, { message: 'Not allowed while viewing as this person' })
     c.set('userId', session.user.id)
     c.set('sessionId', session.session.id)
     await next()
   }
+
+/** Only the `admin` role (not `support`). Run after requireSession; reads the role from the database, not the cookie. */
+const requireAdmin: MiddlewareHandler<AppEnv> = async (c, next) => {
+  const [me] = await c.var.db
+    .select({ role: schema.user.role })
+    .from(schema.user)
+    .where(eq(schema.user.id, c.var.userId))
+  if (me?.role !== 'admin') throw new HTTPException(403, { message: 'Not allowed' })
+  await next()
+}
 
 const toAccount = (
   row: typeof schema.user.$inferSelect,
@@ -357,6 +382,39 @@ export function createApp(options: AppOptions = {}) {
         signInActivity: await recentSignIns(c.var.db, c.var.userId),
         securityActivity: await recentAudit(c.var.db, c.var.userId),
         teams: await teamsOf(c.var.db, c.var.userId),
+        // What a company directory (SCIM) says about this person, per team.
+        directory: await c.var.db
+          .select({
+            team: schema.organization.name,
+            userName: schema.scimUser.userName,
+            externalId: schema.scimUser.externalId,
+            active: schema.scimUser.active
+          })
+          .from(schema.scimUser)
+          .innerJoin(
+            schema.scimConnection,
+            eq(schema.scimConnection.id, schema.scimUser.connectionId)
+          )
+          .innerJoin(
+            schema.organization,
+            eq(schema.organization.id, schema.scimConnection.organizationId)
+          )
+          .where(eq(schema.scimUser.userId, c.var.userId)),
+        // AI apps this person approved (not the tokens).
+        connectedApps: (
+          await c.var.db
+            .select({
+              clientId: schema.oauthConsent.clientId,
+              scopes: schema.oauthConsent.scopes,
+              createdAt: schema.oauthConsent.createdAt
+            })
+            .from(schema.oauthConsent)
+            .where(eq(schema.oauthConsent.userId, c.var.userId))
+        ).map((r) => ({
+          clientId: r.clientId,
+          scopes: Array.isArray(r.scopes) ? r.scopes.map(String) : [],
+          createdAt: r.createdAt.toISOString()
+        })),
         // Never the key itself or its hash: only enough to recognise which key it was.
         apiKeys: (
           await c.var.db
@@ -544,13 +602,19 @@ export function createApp(options: AppOptions = {}) {
       .use(async (c, next) => {
         const db = createDb(c.env.DB)
         c.set('db', db)
-        c.set(
-          'auth',
-          createAuth({
+        // Built on first use: health checks, SCIM and preferences never touch it, and it is the heavy part.
+        let auth: Auth | undefined
+        const make = (): Auth =>
+          (auth ??= createAuth({
             db,
             env: c.env,
             email: sender(c.env),
             waitUntil: (p) => c.executionCtx.waitUntil(p)
+          }))
+        c.set(
+          'auth',
+          new Proxy({} as Auth, {
+            get: (_target, property) => Reflect.get(make(), property)
           })
         )
         await next()
@@ -563,6 +627,41 @@ export function createApp(options: AppOptions = {}) {
         })
         if (!allowed.success) throw new HTTPException(403, { message: 'Not allowed' })
         return c.json(await recentAudit(c.var.db, c.req.param('userId')))
+      })
+      // Staff (admin role only): the AI apps that have asked for access, and a switch to turn one off or on. Better Auth's
+      // own update-client route cannot set `disabled` from outside the server, so this is ours.
+      .get('/admin/ai-apps', requireSession(true), requireAdmin, async (c) =>
+        c.json(await listAiApps(c.var.db))
+      )
+      .post('/admin/ai-apps/:action', requireSession(true), requireAdmin, async (c) => {
+        const action = c.req.param('action')
+        if (action !== 'disable' && action !== 'enable')
+          throw new HTTPException(404, { message: 'Not found' })
+        const body = z
+          .object({ clientId: z.string().min(1).max(2048) })
+          .safeParse(await c.req.json().catch(() => null))
+        if (!body.success) throw new HTTPException(400, { message: 'Choose an app' })
+        const disabling = action === 'disable'
+        const [known] = await c.var.db
+          .select({ id: schema.oauthClient.id })
+          .from(schema.oauthClient)
+          .where(eq(schema.oauthClient.clientId, body.data.clientId))
+        if (!known) throw new HTTPException(404, { message: 'No such app' })
+        await c.var.db.batch(setAiAppDisabledStatements(c.var.db, body.data.clientId, disabling))
+        c.executionCtx.waitUntil(
+          recordAudit(c.var.db, {
+            type: disabling ? 'ai_app_disabled' : 'ai_app_enabled',
+            outcome: 'success',
+            // Kept under the staff member's own id: events about nobody are pruned after 30 days.
+            userId: c.var.userId,
+            actorId: c.var.userId,
+            ipAddress: c.req.header('cf-connecting-ip') ?? null,
+            userAgent: c.req.header('user-agent') ?? null,
+            subject: body.data.clientId.slice(0, 200),
+            now: Date.now()
+          }).catch((error: unknown) => console.error('Could not record the app change', error))
+        )
+        return c.json({ ok: true })
       })
       // The simplest call a script can make with an API key (header x-api-key): who owns this key.
       .get('/v1/me', async (c) => {
@@ -580,6 +679,53 @@ export function createApp(options: AppOptions = {}) {
           .where(eq(schema.user.id, checked.key.referenceId))
         if (!owner || owner.banned) throw new HTTPException(401, { message: 'Invalid key' })
         return c.json({ id: owner.id, email: owner.email })
+      })
+      // AI apps (Model Context Protocol) call this with an access token that a person approved. The token is checked
+      // against our signing keys (no database read), then the person is looked up so a suspension takes effect at once.
+      .all('/mcp', async (c) => {
+        const { baseURL, internalAdapter } = await c.var.auth.$context
+        const guarded = createMcpProtectedRequestHandler(
+          {
+            issuer: baseURL,
+            audience: mcpResource(c.env.BETTER_AUTH_URL),
+            jwtVerifyOptions: { requiredClaims: ['azp'] },
+            requiredScopes: [MCP_READ_SCOPE],
+            // Our own signing keys, read in-process: a Worker should not call its own address to fetch them.
+            jwksUrl: (() => cachedJwks(() => c.var.auth.api.getJwks())) as unknown as string,
+            dpop: { replayStore: createDpopReplayStore(internalAdapter) }
+          },
+          async (request, claims) => {
+            const [owner] = await c.var.db
+              .select({ banned: schema.user.banned, banExpires: schema.user.banExpires })
+              .from(schema.user)
+              .where(eq(schema.user.id, String(claims.sub)))
+            const suspended =
+              owner?.banned && (!owner.banExpires || owner.banExpires.getTime() > Date.now())
+            if (!owner || suspended)
+              return Response.json({ error: 'invalid_token' }, { status: 401 })
+            // Staff can switch an app off; its tokens stop working at once, not when they expire.
+            if (await isAiAppDisabled(c.var.db, String(claims.azp)))
+              return Response.json({ error: 'invalid_token' }, { status: 401 })
+            return handleMcp(
+              request,
+              c.var.db,
+              String(claims.sub),
+              c.env.APP_NAME || DEFAULT_APP_NAME,
+              String(claims.scope ?? '')
+                .split(' ')
+                .filter(Boolean),
+              new URL('/.well-known/oauth-protected-resource/api/mcp', c.env.BETTER_AUTH_URL).href
+            )
+          }
+        )
+        return guarded(c.req.raw)
+      })
+      // OAuth discovery documents live at the site root (/.well-known/...), outside /api. index.ts sends them here,
+      // and Better Auth answers from the original path.
+      .on(['GET', 'HEAD'], '/__discovery/*', (c) => {
+        const url = new URL(c.req.url)
+        url.pathname = url.pathname.slice('/api/__discovery'.length)
+        return c.var.auth.handler(new Request(url, c.req.raw))
       })
       // Sign-in, sessions and sign-out: handled by Better Auth under /api/auth/*.
       .on(['GET', 'POST'], '/auth/*', async (c) => {
@@ -643,6 +789,56 @@ export function createApp(options: AppOptions = {}) {
         c.header('cache-control', 'private, max-age=60')
         return c.json({ flags: evaluateFlags(rules, channel, id) })
       })
+      // The page /t/<slug>/sign-in: a team's own company sign-in. Public, and it says nothing beyond the team's name,
+      // and only for a team that has a company sign-in whose domain was proven (anyone else gets the same 404, so the
+      // address cannot be used to find out which teams exist).
+      .get('/team-sign-in/:slug', async (c) => {
+        const slug = c.req.param('slug').toLowerCase()
+        if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(slug))
+          throw new HTTPException(404, { message: 'Not found' })
+        const [team] = await c.var.db
+          .select({ name: schema.organization.name })
+          .from(schema.organization)
+          .innerJoin(
+            schema.ssoProvider,
+            eq(schema.ssoProvider.organizationId, schema.organization.id)
+          )
+          .where(
+            and(eq(schema.organization.slug, slug), eq(schema.ssoProvider.domainVerified, true))
+          )
+          .limit(1)
+        if (!team) throw new HTTPException(404, { message: 'Not found' })
+        c.header('cache-control', 'private, max-age=60')
+        return c.json({ name: team.name })
+      })
+      // Fill in a company's sign-in settings from its issuer address. For staff and for owners and admins of a team.
+      .get('/sso-discover', requireSession(true), async (c) => {
+        const [staff] = await c.var.db
+          .select({ role: schema.user.role })
+          .from(schema.user)
+          .where(eq(schema.user.id, c.var.userId))
+        const [seat] = await c.var.db
+          .select({ id: schema.member.id })
+          .from(schema.member)
+          .where(
+            and(
+              eq(schema.member.userId, c.var.userId),
+              inArray(schema.member.role, ['owner', 'admin'])
+            )
+          )
+        if (staff?.role !== 'admin' && !seat)
+          throw new HTTPException(403, { message: 'Not allowed' })
+        try {
+          return c.json(await discoverIssuer(c.req.query('issuer') ?? ''))
+        } catch (error) {
+          if (error instanceof DiscoveryError)
+            throw new HTTPException(400, { message: error.message })
+          throw error
+        }
+      })
+      // Directory sync: the company's identity provider calls /scim/v2 with a bearer token; owners manage tokens.
+      .route('/scim/v2', createScimApi())
+      .route('/scim-connections', createScimAdmin(requireSession(true)))
       .route('/preferences', preferences)
       .route('/devices', devices)
       .route('/feedback', feedback)

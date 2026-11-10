@@ -69,7 +69,8 @@ const edits = {
   'apps/web/index.html': (s) => s.replace(/<title>.*<[/]title>/, `<title>${title}</title>`),
   'README.md': (s) =>
     s.replace(/^# .*$/m, `# ${title}`).replaceAll(`${oldOwner}/${oldName}`, `${owner}/${name}`),
-  'docs/releasing.md': (s) => s.replaceAll(`${oldOwner}/${oldName}`, `${owner}/${name}`),
+  'docs/releasing/checks-and-security.md': (s) =>
+    s.replaceAll(`${oldOwner}/${oldName}`, `${owner}/${name}`),
   LICENSE: (s) => s.replace(/Copyright \(c\) (\d{4}) .*/, `Copyright (c) $1 ${owner}`)
 }
 
@@ -82,7 +83,7 @@ for (const [file, fn] of Object.entries(edits)) {
 
 console.log(`\nRenamed to "${title}" (${name}, ${newId}, owner ${owner}).`)
 console.log(
-  'Tip: run `pnpm template:update --adopt` once to track the template, so later template improvements can be pulled in (docs/template-updates.md).'
+  'Tip: run `pnpm template:update --adopt` once to track the template, so later template improvements can be pulled in (docs/guides/template-updates.md).'
 )
 console.log(
   'Next: review `git diff`, then commit. Remember to point the git remote at the new repo.'

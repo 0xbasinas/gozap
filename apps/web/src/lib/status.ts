@@ -1,6 +1,6 @@
 /**
  * Where a stable release should be in its staged rollout, by age: 10% when published, 25% after one day, 50% after
- * two, 100% after three (the schedule in docs/releasing.md). It is the usual schedule, not a measurement: the
+ * two, 100% after three (the schedule in docs/releasing/rollouts.md). It is the usual schedule, not a measurement: the
  * guard pauses a release that looks unhealthy, and the people who run the app can change it by hand.
  */
 export function expectedRollout(publishedAt: string, now = Date.now()): number | null {

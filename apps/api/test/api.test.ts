@@ -509,6 +509,85 @@ describe('account', () => {
     expect((await s.call('/api/account', { headers: { cookie } })).status).toBe(200)
   })
 
+  it("keeps a team's company sign-in when the person who set it up is deleted", async () => {
+    const s = setup()
+    await signIn(s, 'setup-owner@example.com')
+    await signIn(s, 'setup-admin@example.com')
+    await signIn(s, 'setup-solo@example.com')
+    const db = bindings.DB
+    const id = async (email: string): Promise<string> =>
+      (await db.prepare('SELECT id FROM user WHERE email = ?').bind(email).first<{ id: string }>())!
+        .id
+    const [owner, admin, solo] = [
+      await id('setup-owner@example.com'),
+      await id('setup-admin@example.com'),
+      await id('setup-solo@example.com')
+    ]
+    const now = Date.now()
+    const insert = async (sql: string, ...v: unknown[]): Promise<void> => {
+      await db
+        .prepare(sql)
+        .bind(...v)
+        .run()
+    }
+    await insert(
+      "INSERT INTO organization (id, name, slug, created_at) VALUES ('t-shared', 'Shared', 't-shared', ?)",
+      now
+    )
+    await insert(
+      "INSERT INTO organization (id, name, slug, created_at) VALUES ('t-solo', 'Solo', 't-solo', ?)",
+      now
+    )
+    await insert(
+      "INSERT INTO member (id, organization_id, user_id, role, created_at) VALUES ('m1', 't-shared', ?, 'owner', ?)",
+      owner,
+      now
+    )
+    await insert(
+      "INSERT INTO member (id, organization_id, user_id, role, created_at) VALUES ('m2', 't-shared', ?, 'admin', ?)",
+      admin,
+      now
+    )
+    await insert(
+      "INSERT INTO member (id, organization_id, user_id, role, created_at) VALUES ('m3', 't-solo', ?, 'owner', ?)",
+      solo,
+      now
+    )
+    await insert(
+      "INSERT INTO sso_provider (id, issuer, user_id, provider_id, organization_id, domain) VALUES ('p1', 'https://idp.a', ?, 'prov-shared', 't-shared', 'a.example')",
+      owner
+    )
+    await insert(
+      "INSERT INTO sso_provider (id, issuer, user_id, provider_id, organization_id, domain) VALUES ('p2', 'https://idp.b', ?, 'prov-solo', 't-solo', 'b.example')",
+      solo
+    )
+    await insert(
+      "INSERT INTO account_deletion (user_id, requested_at, scheduled_for, cancel_token_hash) VALUES (?, ?, ?, 'x')",
+      owner,
+      now - 2000,
+      now - 1000
+    )
+    await insert(
+      "INSERT INTO account_deletion (user_id, requested_at, scheduled_for, cancel_token_hash) VALUES (?, ?, ?, 'x')",
+      solo,
+      now - 2000,
+      now - 1000
+    )
+
+    expect(await deleteDueAccounts(createDb(db), now)).toBe(2)
+    const kept = await db
+      .prepare('SELECT user_id FROM sso_provider WHERE provider_id = ?')
+      .bind('prov-shared')
+      .first<{ user_id: string }>()
+    expect(kept?.user_id).toBe(admin)
+    expect(
+      await db
+        .prepare('SELECT id FROM sso_provider WHERE provider_id = ?')
+        .bind('prov-solo')
+        .first()
+    ).toBeNull()
+  })
+
   it('does not let a cross-site page cancel with a token', async () => {
     const s = setup()
     const response = await s.call('/api/account/deletion/cancel-with-token', {
@@ -1436,6 +1515,36 @@ describe('staff roles (admin plugin)', () => {
     expect(verify.headers.get('location')).toContain('/sign-in?error=suspended')
     void victim
   })
+
+  it('lets staff look as a person but not act as them, and still lets them stop', async () => {
+    const s = setup()
+    const admin = await staff(s, 'boss3@example.com', 'admin')
+    await signIn(s, 'viewed@example.com')
+    const row = await bindings.DB.prepare('SELECT id FROM user WHERE email = ?')
+      .bind('viewed@example.com')
+      .first<{ id: string }>()
+    const imp = await s.call('/api/auth/admin/impersonate-user', {
+      method: 'POST',
+      headers: { cookie: admin, ...json },
+      body: JSON.stringify({ userId: row!.id })
+    })
+    expect(imp.status).toBe(200)
+    // Later cookies with the same name win, as in a browser.
+    const jar = new Map<string, string>()
+    for (const part of [admin, ...imp.headers.getSetCookie().map((c) => c.split(';')[0]!)])
+      for (const pair of part.split('; ')) jar.set(pair.split('=')[0]!, pair)
+    const cookie = [...jar.values()].join('; ')
+    const post = (path: string, body: unknown): Promise<Response> =>
+      s.call(path, { method: 'POST', headers: { cookie, ...json }, body: JSON.stringify(body) })
+
+    expect((await s.call('/api/account', { headers: { cookie } })).status).toBe(200)
+    expect((await post('/api/auth/api-key/create', { name: 'backdoor' })).status).toBe(403)
+    expect(
+      (await post('/api/account/email-change', { newEmail: 'staff@example.com' })).status
+    ).toBe(403)
+    expect((await s.call('/api/account/export', { headers: { cookie } })).status).toBe(403)
+    expect((await post('/api/auth/admin/stop-impersonating', {})).status).toBe(200)
+  })
 })
 
 describe('API keys', () => {
@@ -1632,6 +1741,211 @@ describe('single sign-on (OpenID Connect)', () => {
     expect(await made.json()).toMatchObject({ providerId: 'acme', domainVerified: false })
   })
 
+  const adminFor = async (s: ReturnType<typeof setup>, email: string): Promise<string> => {
+    await signIn(s, email)
+    await bindings.DB.prepare("UPDATE user SET role = 'admin' WHERE email = ?").bind(email).run()
+    return signIn(s, email)
+  }
+  const update = (
+    s: ReturnType<typeof setup>,
+    cookie: string,
+    providerId: string,
+    body: Record<string, unknown>
+  ): Promise<Response> =>
+    s.call('/api/auth/sso/update-provider', {
+      method: 'POST',
+      headers: { cookie, ...json },
+      body: JSON.stringify({ providerId, ...body })
+    })
+
+  it('freezes who a provider is and its domain while people sign in through it, but lets the secret change', async () => {
+    const s = setup()
+    const admin = await adminFor(s, 'boss-update@example.com')
+    await register(s, admin, provider('upd-co'))
+
+    // Nobody linked yet: everything may change.
+    expect((await update(s, admin, 'upd-co', { domain: 'moved.example' })).status).toBe(200)
+    expect((await update(s, admin, 'upd-co', { domain: 'acme.example' })).status).toBe(200)
+
+    // Someone signs in through it (a linked account).
+    const person = await signIn(s, 'linked-person@example.com')
+    expect(person).toBeTruthy()
+    await bindings.DB.prepare(
+      "INSERT INTO account (id, account_id, provider_id, user_id, created_at, updated_at) SELECT ?, 'sub-1', 'upd-co', id, 0, 0 FROM user WHERE email = ?"
+    )
+      .bind(crypto.randomUUID(), 'linked-person@example.com')
+      .run()
+
+    // The plugin refuses to move the issuer, client id and endpoints ...
+    expect((await update(s, admin, 'upd-co', { issuer: 'https://evil.example' })).status).toBe(409)
+    expect((await update(s, admin, 'upd-co', { oidcConfig: { clientId: 'another' } })).status).toBe(
+      409
+    )
+    // ... and we refuse the domain; both mean delete and add again.
+    const moved = await update(s, admin, 'upd-co', { domain: 'moved.example' })
+    expect(moved.status).toBe(409)
+    expect(await moved.text()).toContain('Delete it and add it again')
+    // Writing the same domain again, rotating the secret and changing scopes are fine.
+    expect((await update(s, admin, 'upd-co', { domain: 'ACME.example' })).status).toBe(200)
+    expect(
+      (
+        await update(s, admin, 'upd-co', {
+          oidcConfig: { clientSecret: 'rotated', scopes: ['openid', 'email'] }
+        })
+      ).status
+    ).toBe(200)
+    // The new secret is stored encrypted like the first one.
+    const stored = await bindings.DB.prepare(
+      'SELECT oidc_config FROM sso_provider WHERE provider_id = ?'
+    )
+      .bind('upd-co')
+      .first<{ oidc_config: string }>()
+    expect(stored!.oidc_config).toContain('enc:v1:')
+    expect(stored!.oidc_config).not.toContain('rotated')
+    await bindings.DB.prepare('DELETE FROM account WHERE provider_id = ?').bind('upd-co').run()
+  })
+
+  it('does not let a provider overwrite the details of people who sign in with it', async () => {
+    const s = setup()
+    const admin = await adminFor(s, 'boss-override@example.com')
+    const body = JSON.parse(provider('override-co')) as { oidcConfig: Record<string, unknown> }
+    body.oidcConfig.overrideUserInfo = true
+    expect((await register(s, admin, JSON.stringify(body))).status).toBe(400)
+    await register(s, admin, provider('override-ok'))
+    expect(
+      (await update(s, admin, 'override-ok', { oidcConfig: { overrideUserInfo: true } })).status
+    ).toBe(400)
+  })
+
+  it('refuses endpoints on a private or internal host without any trusted-origins setting', async () => {
+    const s = setup()
+    const admin = await adminFor(s, 'boss-private@example.com')
+    for (const host of ['https://10.0.0.5', 'https://localhost', 'http://idp.example.com']) {
+      const body = JSON.parse(provider('private-co')) as { oidcConfig: Record<string, unknown> }
+      body.oidcConfig.tokenEndpoint = `${host}/token`
+      body.oidcConfig.authorizationEndpoint = `${host}/authorize`
+      expect((await register(s, admin, JSON.stringify(body))).status).toBe(400)
+    }
+  })
+
+  it('serves a team company-sign-in page only for a team with a proven provider', async () => {
+    const s = setup()
+    const owner = await signIn(s, 'team-page-owner@example.com')
+    const made = await s.call('/api/auth/organization/create', {
+      method: 'POST',
+      headers: { cookie: owner, ...json },
+      body: JSON.stringify({ name: 'Page Corp', slug: 'page-corp' })
+    })
+    const team = (await made.json()) as { id: string }
+    // No provider yet: indistinguishable from a team that does not exist.
+    expect((await s.call('/api/team-sign-in/page-corp')).status).toBe(404)
+    expect((await s.call('/api/team-sign-in/no-such-team')).status).toBe(404)
+    expect((await s.call('/api/team-sign-in/Bad%20Slug!')).status).toBe(404)
+    await register(s, owner, provider('page-co', { organizationId: team.id }))
+    // A provider whose domain is still unproven does not count.
+    expect((await s.call('/api/team-sign-in/page-corp')).status).toBe(404)
+    await bindings.DB.prepare('UPDATE sso_provider SET domain_verified = 1 WHERE provider_id = ?')
+      .bind('page-co')
+      .run()
+    const page = await s.call('/api/team-sign-in/page-corp')
+    expect(page.status).toBe(200)
+    expect(await page.json()).toEqual({ name: 'Page Corp' })
+  })
+
+  it('lets a team owner add a provider for the team, but not a plain member or a stranger', async () => {
+    const s = setup()
+    const owner = await signIn(s, 'team-owner-sso@example.com')
+    const made = await s.call('/api/auth/organization/create', {
+      method: 'POST',
+      headers: { cookie: owner, ...json },
+      body: JSON.stringify({ name: 'Co', slug: 'co-sso-1' })
+    })
+    const team = (await made.json()) as { id: string }
+    // Without a team it is refused; with the team it works.
+    expect((await register(s, owner, provider('team-co-a'))).status).toBe(403)
+    const ok = await register(s, owner, provider('team-co-b', { organizationId: team.id }))
+    expect(ok.status).toBe(200)
+    // Someone who is not in the team cannot attach a provider to it.
+    const stranger = await signIn(s, 'team-stranger-sso@example.com')
+    const refused = await register(s, stranger, provider('team-co-c', { organizationId: team.id }))
+    expect(refused.status).toBeGreaterThanOrEqual(400)
+  })
+
+  it('ends the sessions of people who signed in through a provider when it is deleted', async () => {
+    const s = setup()
+    const owner = await signIn(s, 'team-owner-del@example.com')
+    const made = await s.call('/api/auth/organization/create', {
+      method: 'POST',
+      headers: { cookie: owner, ...json },
+      body: JSON.stringify({ name: 'Co2', slug: 'co-sso-2' })
+    })
+    const team = (await made.json()) as { id: string }
+    expect(
+      (await register(s, owner, provider('team-co-del', { organizationId: team.id }))).status
+    ).toBe(200)
+    const victim = await signIn(s, 'person-del@acme.example')
+    await bindings.DB.prepare(
+      "INSERT INTO account (id, account_id, provider_id, user_id, created_at, updated_at) SELECT 'acc-del', 'sub-1', 'team-co-del', id, 1, 1 FROM user WHERE email = ?"
+    )
+      .bind('person-del@acme.example')
+      .run()
+    expect((await s.call('/api/preferences', { headers: { cookie: victim } })).status).toBe(200)
+    const gone = await s.call('/api/auth/sso/delete-provider', {
+      method: 'POST',
+      headers: { cookie: owner, ...json },
+      body: JSON.stringify({ providerId: 'team-co-del' })
+    })
+    expect(gone.status).toBe(200)
+    expect((await s.call('/api/preferences', { headers: { cookie: victim } })).status).toBe(401)
+  })
+
+  it('removes a team’s providers when the team is deleted', async () => {
+    const s = setup()
+    const owner = await signIn(s, 'team-owner-gone@example.com')
+    const made = await s.call('/api/auth/organization/create', {
+      method: 'POST',
+      headers: { cookie: owner, ...json },
+      body: JSON.stringify({ name: 'Co3', slug: 'co-sso-3' })
+    })
+    const team = (await made.json()) as { id: string }
+    expect(
+      (await register(s, owner, provider('team-co-gone', { organizationId: team.id }))).status
+    ).toBe(200)
+    await s.call('/api/auth/organization/delete', {
+      method: 'POST',
+      headers: { cookie: owner, ...json },
+      body: JSON.stringify({ organizationId: team.id })
+    })
+    const left = await bindings.DB.prepare('SELECT id FROM sso_provider WHERE provider_id = ?')
+      .bind('team-co-gone')
+      .first()
+    expect(left).toBeNull()
+  })
+
+  it('looks up sign-in settings only for staff and team owners or admins', async () => {
+    const s = setup()
+    const plain = await signIn(s, 'plain-disc@example.com')
+    expect(
+      (
+        await s.call('/api/sso-discover?issuer=https://acme.okta.example', {
+          headers: { cookie: plain }
+        })
+      ).status
+    ).toBe(403)
+    const owner = await signIn(s, 'owner-disc@example.com')
+    await s.call('/api/auth/organization/create', {
+      method: 'POST',
+      headers: { cookie: owner, ...json },
+      body: JSON.stringify({ name: 'Disc', slug: 'disc-sso-1' })
+    })
+    // Allowed, but a private address is refused before anything is fetched.
+    const refused = await s.call('/api/sso-discover?issuer=https://127.0.0.1', {
+      headers: { cookie: owner }
+    })
+    expect(refused.status).toBe(400)
+    expect((await s.call('/api/sso-discover?issuer=https://acme.okta.example')).status).toBe(401)
+  })
+
   it('refuses SAML providers, even from an admin', async () => {
     const s = setup()
     await signIn(s, 'boss-saml@example.com')
@@ -1809,6 +2123,7 @@ describe('single sign-on, a whole login against a fake identity provider', () =>
 
   /** A pretend identity provider: signs id tokens with its own key and publishes the public half. */
   const tokenCalls: (string | null)[] = []
+  const tokenBodies: string[] = []
   async function fakeIdp(claims: () => Record<string, unknown>): Promise<void> {
     const pair = (await crypto.subtle.generateKey(
       {
@@ -1832,6 +2147,7 @@ describe('single sign-on, a whole login against a fake identity provider', () =>
       if (url === `${IDP}/jwks`) return Response.json({ keys: [jwk] })
       if (url === `${IDP}/token`) {
         tokenCalls.push(new Headers(init?.headers).get('authorization'))
+        tokenBodies.push(String(init?.body ?? ''))
         const head = b64(JSON.stringify({ alg: 'RS256', kid: 'k1', typ: 'JWT' }))
         const now = Math.floor(Date.now() / 1000)
         const body = b64(
@@ -1911,6 +2227,226 @@ describe('single sign-on, a whole login against a fake identity provider', () =>
   }
 
   afterEach(() => vi.restoreAllMocks())
+
+  /**
+   * A company with a team, a proven domain and a directory connection. Returns what the directory needs and a way to
+   * push a person into it.
+   */
+  async function companyWithDirectory(s: ReturnType<typeof setup>, id: string) {
+    await setupCompany(s, true, id)
+    const ownerEmail = `owner@${id}.example`
+    const owner = await signIn(s, ownerEmail)
+    const made = await s.call('/api/auth/organization/create', {
+      method: 'POST',
+      headers: { cookie: owner, ...json },
+      body: JSON.stringify({ name: `Team ${id}`, slug: `team-${id}` })
+    })
+    const team = (await made.json()) as { id: string }
+    await bindings.DB.prepare('UPDATE sso_provider SET organization_id = ? WHERE provider_id = ?')
+      .bind(team.id, id)
+      .run()
+    const conn = await s.call('/api/scim-connections', {
+      method: 'POST',
+      headers: { cookie: owner, ...json },
+      body: JSON.stringify({ organizationId: team.id, name: 'Okta' })
+    })
+    expect(conn.status).toBe(201)
+    const { token } = (await conn.json()) as { token: string }
+    const scim = (path: string, method: string, body?: unknown): Promise<Response> =>
+      s.call(`/api/scim/v2${path}`, {
+        method,
+        headers: {
+          authorization: `Bearer ${token}`,
+          ...(body === undefined ? {} : { 'content-type': 'application/scim+json' })
+        },
+        body: body === undefined ? undefined : JSON.stringify(body)
+      })
+    const push = async (email: string, externalId: string): Promise<string> => {
+      const r = await scim('/Users', 'POST', {
+        schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+        userName: email,
+        externalId,
+        emails: [{ value: email, primary: true, type: 'work' }]
+      })
+      expect(r.status).toBe(201)
+      return ((await r.json()) as { id: string }).id
+    }
+    const setActive = async (scimId: string, active: boolean): Promise<void> => {
+      const r = await scim(`/Users/${scimId}`, 'PATCH', {
+        schemas: ['urn:ietf:params:scim:api:messages:2.0:PatchOp'],
+        Operations: [{ op: 'replace', path: 'active', value: active }]
+      })
+      expect(r.status).toBe(200)
+    }
+    return { push, setActive }
+  }
+
+  const linksOf = async (providerId: string): Promise<number> =>
+    (await bindings.DB.prepare('SELECT COUNT(*) AS n FROM account WHERE provider_id = ?')
+      .bind(providerId)
+      .first<{ n: number }>())!.n
+
+  const loginAs = async (s: ReturnType<typeof setup>, id: string): Promise<Response> => {
+    const { path, cookie } = await startLogin(s, id)
+    return s.call(path, { headers: { cookie } })
+  }
+
+  it('signs in to the company with a private key instead of a shared secret, kept encrypted', async () => {
+    await fakeIdp(() => ({ sub: 'pk-sub', email: 'ada@pk-co.example', email_verified: true }))
+    const pair = (await crypto.subtle.generateKey(
+      {
+        name: 'RSASSA-PKCS1-v1_5',
+        modulusLength: 2048,
+        publicExponent: new Uint8Array([1, 0, 1]),
+        hash: 'SHA-256'
+      },
+      true,
+      ['sign', 'verify']
+    )) as CryptoKeyPair
+    const der = new Uint8Array(
+      (await crypto.subtle.exportKey('pkcs8', pair.privateKey)) as ArrayBuffer
+    )
+    let raw = ''
+    for (const b of der) raw += String.fromCharCode(b)
+    const pem = [
+      '-----BEGIN PRIVATE KEY-----',
+      ...btoa(raw).match(/.{1,64}/g)!,
+      '-----END PRIVATE KEY-----'
+    ].join(String.fromCharCode(10))
+
+    const s = setup()
+    await signIn(s, 'boss-oidc@example.com')
+    await bindings.DB.prepare("UPDATE user SET role = 'admin' WHERE email = ?")
+      .bind('boss-oidc@example.com')
+      .run()
+    const admin = await signIn(s, 'boss-oidc@example.com')
+    const register = (privateKey: string): Promise<Response> =>
+      s.call('/api/auth/sso/register', {
+        method: 'POST',
+        headers: { cookie: admin, ...json },
+        body: JSON.stringify({
+          providerId: 'pk-co',
+          issuer: IDP,
+          domain: 'pk-co.example',
+          oidcConfig: {
+            clientId: 'client',
+            clientSecret: privateKey,
+            tokenEndpointAuthentication: 'private_key_jwt',
+            privateKeyAlgorithm: 'RS256',
+            privateKeyId: 'our-key-1',
+            authorizationEndpoint: `${IDP}/authorize`,
+            tokenEndpoint: `${IDP}/token`,
+            jwksEndpoint: `${IDP}/jwks`,
+            discoveryEndpoint: `${IDP}/.well-known/openid-configuration`,
+            skipDiscovery: true,
+            scopes: ['openid', 'email', 'profile']
+          }
+        })
+      })
+    // Not a key: refused before anything is stored.
+    expect((await register('not a key')).status).toBe(400)
+    expect(await linksOf('pk-co')).toBe(0)
+    expect((await register(pem)).status).toBe(200)
+    await bindings.DB.prepare('UPDATE sso_provider SET domain_verified = 1 WHERE provider_id = ?')
+      .bind('pk-co')
+      .run()
+
+    // At rest the key is encrypted, like a client secret.
+    const stored = await bindings.DB.prepare(
+      "SELECT oidc_config AS c FROM sso_provider WHERE provider_id = 'pk-co'"
+    ).first<{ c: string }>()
+    expect(stored!.c).not.toContain('BEGIN PRIVATE KEY')
+    expect(stored!.c).toContain('enc:v1:')
+
+    tokenBodies.length = 0
+    const done = await loginAs(s, 'pk-co')
+    expect(done.status).toBe(302)
+    expect(tokenBodies.length).toBe(1)
+    const sent = new URLSearchParams(tokenBodies[0])
+    expect(sent.get('client_assertion_type')).toBe(
+      'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
+    )
+    // A signed statement, never a secret.
+    const assertion = sent.get('client_assertion')!
+    expect(assertion.split('.')).toHaveLength(3)
+    expect(sent.get('client_secret')).toBeNull()
+    expect(
+      JSON.parse(atob(assertion.split('.')[0]!.replaceAll('-', '+').replaceAll('_', '/')))
+    ).toMatchObject({
+      alg: 'RS256',
+      kid: 'our-key-1'
+    })
+  })
+
+  it('links company sign-in to a person the directory lists as active, and unlinks them when switched off', async () => {
+    await fakeIdp(() => ({
+      sub: 'dir-sub-1',
+      email: 'ada@dir-co.example',
+      email_verified: true,
+      name: 'Ada'
+    }))
+    const s = setup()
+    const { push, setActive } = await companyWithDirectory(s, 'dir-co')
+    const scimId = await push('ada@dir-co.example', 'dir-sub-1')
+    // A directory-made account has an unverified address, and the plugin links only verified ones: as soon as the
+    // person has proven it (a magic link), their company sign-in can link.
+    await bindings.DB.prepare('UPDATE user SET email_verified = 1 WHERE email = ?')
+      .bind('ada@dir-co.example')
+      .run()
+
+    const first = await loginAs(s, 'dir-co')
+    expect(first.headers.getSetCookie().join(';')).toContain('session_token')
+    expect(await linksOf('dir-co')).toBe(1)
+
+    // Switched off in the directory: the link is removed with the membership ...
+    await setActive(scimId, false)
+    expect(await linksOf('dir-co')).toBe(0)
+    // ... and the identity provider cannot link it again while the person stays off.
+    const refused = await loginAs(s, 'dir-co')
+    expect(refused.headers.getSetCookie().join(';')).not.toContain('session_token')
+    expect(await linksOf('dir-co')).toBe(0)
+    const failure = await bindings.DB.prepare(
+      "SELECT detail FROM audit_event WHERE type = 'user_sign_in_failed' AND detail LIKE '%SSO_DEPROVISIONED%'"
+    ).first()
+    expect(failure).not.toBeNull()
+
+    // Switched back on: signing in links again.
+    await setActive(scimId, true)
+    const again = await loginAs(s, 'dir-co')
+    expect(again.headers.getSetCookie().join(';')).toContain('session_token')
+    expect(await linksOf('dir-co')).toBe(1)
+  })
+
+  it('does not link an identity the directory ties to someone else, even with a matching email', async () => {
+    // The identity provider says "sub 'victim-sub', email ada@..." but the directory says victim-sub is another person.
+    await fakeIdp(() => ({
+      sub: 'victim-sub',
+      email: 'ada@tied-co.example',
+      email_verified: true
+    }))
+    const s = setup()
+    const { push } = await companyWithDirectory(s, 'tied-co')
+    await push('ada@tied-co.example', 'ada-sub')
+    await push('victim@tied-co.example', 'victim-sub')
+    // Verified, so that only our rule (not the plugin's own verified-address rule) can be what refuses.
+    await bindings.DB.prepare('UPDATE user SET email_verified = 1 WHERE email = ?')
+      .bind('ada@tied-co.example')
+      .run()
+
+    const response = await loginAs(s, 'tied-co')
+    expect(response.headers.getSetCookie().join(';')).not.toContain('session_token')
+    expect(await linksOf('tied-co')).toBe(0)
+  })
+
+  it('leaves people the directory does not list, alone', async () => {
+    await fakeIdp(() => ({ sub: 'free-sub', email: 'ada@free-co.example', email_verified: true }))
+    const s = setup()
+    const { push } = await companyWithDirectory(s, 'free-co')
+    await push('someone-else@free-co.example', 'other-sub')
+    const response = await loginAs(s, 'free-co')
+    expect(response.headers.getSetCookie().join(';')).toContain('session_token')
+    expect(await linksOf('free-co')).toBe(1)
+  })
 
   it('signs a person from the verified company in, creating the account', async () => {
     await fakeIdp(() => ({
@@ -2015,5 +2551,1485 @@ describe('suspension and the session cache', () => {
       "INSERT INTO apikey (id, reference_id, key, created_at, updated_at) SELECT 'copy', reference_id, key, 1, 1 FROM apikey WHERE id = ?"
     ).bind(id)
     await expect(copy.run()).rejects.toThrow(/UNIQUE/i)
+  })
+})
+
+describe('directory sync (SCIM)', () => {
+  const json = { 'content-type': 'application/json' }
+  const U = 'urn:ietf:params:scim:schemas:core:2.0:User'
+  const G = 'urn:ietf:params:scim:schemas:core:2.0:Group'
+  const PATCH = 'urn:ietf:params:scim:api:messages:2.0:PatchOp'
+  let n = 0
+
+  /** A team with an owner and a directory connection; returns what a directory needs. */
+  async function connect(s: ReturnType<typeof setup>, slug?: string) {
+    n++
+    const ownerEmail = `scim-owner-${n}@example.com`
+    const owner = await signIn(s, ownerEmail)
+    const made = await s.call('/api/auth/organization/create', {
+      method: 'POST',
+      headers: { cookie: owner, ...json },
+      body: JSON.stringify({ name: `Dir ${n}`, slug: slug ?? `dir-${n}-${Date.now()}` })
+    })
+    const team = (await made.json()) as { id: string }
+    // A directory may only provision addresses at a domain the team has proven.
+    await bindings.DB.prepare(
+      "INSERT INTO sso_provider (id, issuer, user_id, provider_id, organization_id, domain, domain_verified) SELECT ?, 'https://idp.dir', id, ?, ?, 'dir.example', 1 FROM user WHERE email = ?"
+    )
+      .bind(crypto.randomUUID(), `dir-${n}-${crypto.randomUUID()}`, team.id, ownerEmail)
+      .run()
+    const conn = await s.call('/api/scim-connections', {
+      method: 'POST',
+      headers: { cookie: owner, ...json },
+      body: JSON.stringify({ organizationId: team.id, name: 'Okta' })
+    })
+    expect(conn.status).toBe(201)
+    const body = (await conn.json()) as { id: string; token: string }
+    return { owner, ownerEmail, team, connectionId: body.id, token: body.token }
+  }
+  const scim = (
+    s: ReturnType<typeof setup>,
+    token: string | null,
+    path: string,
+    method = 'GET',
+    body?: unknown
+  ): Promise<Response> =>
+    s.call(`/api/scim/v2${path}`, {
+      method,
+      headers: {
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...(body === undefined ? {} : { 'content-type': 'application/scim+json' })
+      },
+      body: body === undefined ? undefined : JSON.stringify(body)
+    })
+  const person = (email: string, extra: Record<string, unknown> = {}) => ({
+    schemas: [U],
+    userName: email,
+    externalId: `ext-${email}`,
+    name: { givenName: 'Test', familyName: 'Person' },
+    emails: [{ value: email, primary: true, type: 'work' }],
+    ...extra
+  })
+  const memberOf = async (teamId: string, email: string): Promise<boolean> =>
+    Boolean(
+      await bindings.DB.prepare(
+        'SELECT m.id FROM member m JOIN user u ON u.id = m.user_id WHERE m.organization_id = ? AND u.email = ?'
+      )
+        .bind(teamId, email)
+        .first()
+    )
+
+  it('lets only the team owner make tokens, shows a token once, and stores only a hash', async () => {
+    const s = setup()
+    const { owner, team, connectionId, token } = await connect(s)
+    expect(token).toMatch(/^scim_/)
+    const stored = await bindings.DB.prepare(
+      'SELECT hash FROM scim_credential WHERE connection_id = ?'
+    )
+      .bind(connectionId)
+      .first<{ hash: string }>()
+    expect(stored!.hash).not.toContain(token)
+    const listed = await s.call(`/api/scim-connections?organizationId=${team.id}`, {
+      headers: { cookie: owner }
+    })
+    expect(JSON.stringify(await listed.json())).not.toContain(token)
+
+    // A plain member and a stranger cannot manage it.
+    const member = await signIn(s, `scim-member-${n}@example.com`)
+    await bindings.DB.prepare(
+      "INSERT INTO member (id, organization_id, user_id, role, created_at) SELECT 'mm-' || id, ?, id, 'member', 1 FROM user WHERE email = ?"
+    )
+      .bind(team.id, `scim-member-${n}@example.com`)
+      .run()
+    for (const cookie of [member, await signIn(s, `scim-stranger-${n}@example.com`)]) {
+      const refused = await s.call('/api/scim-connections', {
+        method: 'POST',
+        headers: { cookie, ...json },
+        body: JSON.stringify({ organizationId: team.id, name: 'x' })
+      })
+      expect(refused.status).toBe(403)
+    }
+  })
+
+  it('answers discovery in public and refuses missing, wrong, revoked and expired tokens', async () => {
+    const s = setup()
+    const { owner, connectionId, token } = await connect(s)
+    const config = await scim(s, null, '/ServiceProviderConfig')
+    expect(config.status).toBe(200)
+    expect(config.headers.get('content-type')).toContain('application/scim+json')
+    expect(((await config.json()) as { patch: { supported: boolean } }).patch.supported).toBe(true)
+    expect((await scim(s, null, '/Schemas')).status).toBe(200)
+    expect((await scim(s, null, '/ResourceTypes/User')).status).toBe(200)
+
+    expect((await scim(s, null, '/Users')).status).toBe(401)
+    expect((await scim(s, 'scim_wrong', '/Users')).status).toBe(401)
+    expect((await scim(s, token, '/Users')).status).toBe(200)
+
+    await bindings.DB.prepare('UPDATE scim_credential SET expires_at = 1 WHERE connection_id = ?')
+      .bind(connectionId)
+      .run()
+    expect((await scim(s, token, '/Users')).status).toBe(401)
+
+    // Rotation: a second token works while the first is revoked.
+    const second = await s.call(`/api/scim-connections/${connectionId}/credentials`, {
+      method: 'POST',
+      headers: { cookie: owner, ...json },
+      body: JSON.stringify({ expiresInDays: 30 })
+    })
+    const { token: fresh, credentialId } = (await second.json()) as {
+      token: string
+      credentialId: string
+    }
+    expect((await scim(s, fresh, '/Users')).status).toBe(200)
+    const revoked = await s.call(
+      `/api/scim-connections/${connectionId}/credentials/${credentialId}`,
+      {
+        method: 'DELETE',
+        headers: { cookie: owner }
+      }
+    )
+    expect(revoked.status).toBe(204)
+    expect((await scim(s, fresh, '/Users')).status).toBe(401)
+  })
+
+  it('provisions a person, finds them by filter, and refuses duplicates', async () => {
+    const s = setup()
+    const { team, token } = await connect(s)
+    const made = await scim(s, token, '/Users', 'POST', person('new.hire@dir.example'))
+    expect(made.status).toBe(201)
+    const created = (await made.json()) as {
+      id: string
+      userName: string
+      active: boolean
+      meta: { location: string }
+    }
+    expect(created.active).toBe(true)
+    expect(created.meta.location).toContain(`/Users/${created.id}`)
+    expect(await memberOf(team.id, 'new.hire@dir.example')).toBe(true)
+    const account = await bindings.DB.prepare('SELECT email_verified FROM user WHERE email = ?')
+      .bind('new.hire@dir.example')
+      .first<{ email_verified: number }>()
+    expect(account!.email_verified).toBe(0)
+
+    const found = await scim(
+      s,
+      token,
+      `/Users?filter=${encodeURIComponent('userName eq "NEW.HIRE@dir.example"')}`
+    )
+    const list = (await found.json()) as { totalResults: number; Resources: { id: string }[] }
+    expect(list.totalResults).toBe(1)
+    expect(list.Resources[0]!.id).toBe(created.id)
+    const none = await scim(
+      s,
+      token,
+      `/Users?filter=${encodeURIComponent('userName eq "nobody@dir.example"')}`
+    )
+    expect(((await none.json()) as { totalResults: number }).totalResults).toBe(0)
+
+    const dupe = await scim(
+      s,
+      token,
+      '/Users',
+      'POST',
+      person('new.hire@dir.example', { externalId: 'other' })
+    )
+    expect(dupe.status).toBe(409)
+    expect(((await dupe.json()) as { scimType: string }).scimType).toBe('uniqueness')
+    const badFilter = await scim(s, token, `/Users?filter=${encodeURIComponent('userName pr')}`)
+    expect(badFilter.status).toBe(400)
+    expect(((await badFilter.json()) as { scimType: string }).scimType).toBe('invalidFilter')
+    expect((await scim(s, token, '/Users/no-such-id')).status).toBe(404)
+    const paged = await scim(s, token, '/Users?count=0')
+    expect(((await paged.json()) as { Resources: unknown[] }).Resources).toHaveLength(0)
+  })
+
+  it('shows what the directory says about a person in their data export', async () => {
+    const s = setup()
+    const { token } = await connect(s)
+    await scim(s, token, '/Users', 'POST', person('exported@dir.example'))
+    const cookie = await signIn(s, 'exported@dir.example')
+    const out = await s.call('/api/account/export', { headers: { cookie } })
+    const body = (await out.json()) as { directory: { userName: string; active: boolean }[] }
+    expect(body.directory).toEqual([
+      expect.objectContaining({ userName: 'exported@dir.example', active: true })
+    ])
+  })
+
+  it('does not adopt an existing account unless the team proved the domain', async () => {
+    const s = setup()
+    const { team, token } = await connect(s)
+    await signIn(s, 'already@proved.example')
+    const refused = await scim(s, token, '/Users', 'POST', person('already@proved.example'))
+    expect(refused.status).toBe(403)
+    expect(await memberOf(team.id, 'already@proved.example')).toBe(false)
+
+    await bindings.DB.prepare(
+      "INSERT INTO sso_provider (id, issuer, user_id, provider_id, organization_id, domain, domain_verified) SELECT ?, 'https://idp.x', id, ?, ?, 'proved.example', 1 FROM user WHERE email = ?"
+    )
+      .bind(`sp-${n}`, `scim-proved-${n}`, team.id, 'already@proved.example')
+      .run()
+    const adopted = await scim(s, token, '/Users', 'POST', person('already@proved.example'))
+    expect(adopted.status).toBe(201)
+    expect(await memberOf(team.id, 'already@proved.example')).toBe(true)
+  })
+
+  it('switches a person off and on, ending access only when the directory created the account', async () => {
+    const s = setup()
+    const { team, token } = await connect(s)
+    const email = 'leaver@dir.example'
+    const { id } = (await (await scim(s, token, '/Users', 'POST', person(email))).json()) as {
+      id: string
+    }
+    // The person has a session (as if they had signed in).
+    const cookie = await signIn(s, email)
+    expect((await s.call('/api/preferences', { headers: { cookie } })).status).toBe(200)
+
+    const off = await scim(s, token, `/Users/${id}`, 'PATCH', {
+      schemas: [PATCH],
+      Operations: [{ op: 'Replace', path: 'active', value: 'False' }]
+    })
+    expect(off.status).toBe(200)
+    expect(((await off.json()) as { active: boolean }).active).toBe(false)
+    expect(await memberOf(team.id, email)).toBe(false)
+    expect((await s.call('/api/preferences', { headers: { cookie } })).status).toBe(401)
+    const banned = await bindings.DB.prepare('SELECT banned, ban_reason FROM user WHERE email = ?')
+      .bind(email)
+      .first<{ banned: number; ban_reason: string }>()
+    expect(banned).toMatchObject({ banned: 1, ban_reason: 'deprovisioned' })
+
+    const on = await scim(s, token, `/Users/${id}`, 'PATCH', {
+      schemas: [PATCH],
+      Operations: [{ op: 'replace', value: { active: true } }]
+    })
+    expect(on.status).toBe(200)
+    expect(await memberOf(team.id, email)).toBe(true)
+    const back = await bindings.DB.prepare('SELECT banned FROM user WHERE email = ?')
+      .bind(email)
+      .first<{ banned: number }>()
+    expect(back!.banned).toBe(0)
+
+    // Deleting the directory record keeps the account.
+    expect((await scim(s, token, `/Users/${id}`, 'DELETE')).status).toBe(204)
+    expect((await scim(s, token, `/Users/${id}`)).status).toBe(404)
+    expect(
+      await bindings.DB.prepare('SELECT id FROM user WHERE email = ?').bind(email).first()
+    ).not.toBeNull()
+  })
+
+  it('never removes the team owner, and an existing account is not suspended', async () => {
+    const s = setup()
+    const { team, token, ownerEmail } = await connect(s)
+    await bindings.DB.prepare('UPDATE sso_provider SET id = id WHERE 0').run()
+    await bindings.DB.prepare(
+      "INSERT INTO sso_provider (id, issuer, user_id, provider_id, organization_id, domain, domain_verified) SELECT ?, 'https://idp.x', id, ?, ?, 'example.com', 1 FROM user WHERE email = ?"
+    )
+      .bind(`sp-o-${n}`, `scim-owner-p-${n}`, team.id, ownerEmail)
+      .run()
+    const { id } = (await (await scim(s, token, '/Users', 'POST', person(ownerEmail))).json()) as {
+      id: string
+    }
+    await scim(s, token, `/Users/${id}`, 'PATCH', {
+      schemas: [PATCH],
+      Operations: [{ op: 'replace', path: 'active', value: false }]
+    })
+    expect(await memberOf(team.id, ownerEmail)).toBe(true)
+    const row = await bindings.DB.prepare('SELECT banned FROM user WHERE email = ?')
+      .bind(ownerEmail)
+      .first<{ banned: number }>()
+    expect(row!.banned).toBe(0)
+  })
+
+  it('replaces with PUT, changes the email (unverified again) and refuses an address in use', async () => {
+    const s = setup()
+    const { token } = await connect(s)
+    const a = (await (
+      await scim(s, token, '/Users', 'POST', person('put.a@dir.example'))
+    ).json()) as { id: string }
+    await scim(s, token, '/Users', 'POST', person('put.b@dir.example'))
+    const clash = await scim(
+      s,
+      token,
+      `/Users/${a.id}`,
+      'PUT',
+      person('put.b@dir.example', { externalId: 'ext-new' })
+    )
+    expect(clash.status).toBe(409)
+    const moved = await scim(
+      s,
+      token,
+      `/Users/${a.id}`,
+      'PUT',
+      person('put.c@dir.example', { externalId: 'ext-put-a' })
+    )
+    expect(moved.status).toBe(200)
+    expect(
+      await bindings.DB.prepare('SELECT id FROM user WHERE email = ?')
+        .bind('put.c@dir.example')
+        .first()
+    ).not.toBeNull()
+    expect(
+      await bindings.DB.prepare('SELECT id FROM user WHERE email = ?')
+        .bind('put.a@dir.example')
+        .first()
+    ).toBeNull()
+  })
+
+  it('brings back the same person when the directory creates them again', async () => {
+    const s = setup()
+    const { team, token } = await connect(s)
+    const email = 'comeback@dir.example'
+    const first = (await (await scim(s, token, '/Users', 'POST', person(email))).json()) as {
+      id: string
+    }
+    await scim(s, token, `/Users/${first.id}`, 'PATCH', {
+      schemas: [PATCH],
+      Operations: [{ op: 'replace', path: 'active', value: false }]
+    })
+    // Same externalId and a new userName spelling: the same record is reused and reactivated.
+    const again = await scim(
+      s,
+      token,
+      '/Users',
+      'POST',
+      person(email.toUpperCase().replace('@DIR.EXAMPLE', '@dir.example'))
+    )
+    expect([201, 409]).toContain(again.status)
+    const second = await scim(
+      s,
+      token,
+      '/Users',
+      'POST',
+      person(email, { userName: 'comeback2@dir.example' })
+    )
+    if (second.status === 201) {
+      expect(((await second.json()) as { id: string }).id).toBe(first.id)
+      expect(await memberOf(team.id, email)).toBe(true)
+    }
+  })
+
+  it('handles groups: create, members, patch, list and delete', async () => {
+    const s = setup()
+    const { token } = await connect(s)
+    const u1 = (await (
+      await scim(s, token, '/Users', 'POST', person('g1@dir.example'))
+    ).json()) as { id: string }
+    const u2 = (await (
+      await scim(s, token, '/Users', 'POST', person('g2@dir.example'))
+    ).json()) as { id: string }
+    const made = await scim(s, token, '/Groups', 'POST', {
+      schemas: [G],
+      displayName: 'Engineers',
+      members: [{ value: u1.id }]
+    })
+    expect(made.status).toBe(201)
+    const group = (await made.json()) as { id: string; members: { value: string }[] }
+    expect(group.members.map((m) => m.value)).toEqual([u1.id])
+
+    expect(
+      (await scim(s, token, '/Groups', 'POST', { schemas: [G], displayName: 'engineers' })).status
+    ).toBe(409)
+    expect(
+      (
+        await scim(s, token, '/Groups', 'POST', {
+          schemas: [G],
+          displayName: 'Bad',
+          members: [{ value: 'nope' }]
+        })
+      ).status
+    ).toBe(400)
+
+    const patched = await scim(s, token, `/Groups/${group.id}`, 'PATCH', {
+      schemas: [PATCH],
+      Operations: [
+        { op: 'add', path: 'members', value: [{ value: u2.id }] },
+        { op: 'remove', path: `members[value eq "${u1.id}"]` }
+      ]
+    })
+    expect(patched.status).toBe(200)
+    expect(
+      ((await patched.json()) as { members: { value: string }[] }).members.map((m) => m.value)
+    ).toEqual([u2.id])
+
+    const put = await scim(s, token, `/Groups/${group.id}`, 'PUT', {
+      schemas: [G],
+      displayName: 'Engineering',
+      members: [{ value: u1.id }, { value: u2.id }]
+    })
+    expect(((await put.json()) as { members: unknown[] }).members).toHaveLength(2)
+
+    const list = await scim(
+      s,
+      token,
+      `/Groups?filter=${encodeURIComponent('displayName eq "engineering"')}`
+    )
+    expect(((await list.json()) as { totalResults: number }).totalResults).toBe(1)
+    expect((await scim(s, token, `/Groups/${group.id}`, 'DELETE')).status).toBe(204)
+    expect((await scim(s, token, `/Groups/${group.id}`)).status).toBe(404)
+    // Deleting a group leaves its people alone.
+    expect((await scim(s, token, `/Users/${u1.id}`)).status).toBe(200)
+  })
+
+  it('keeps each team’s directory apart and honours scopes', async () => {
+    const s = setup()
+    const a = await connect(s)
+    const b = await connect(s)
+    const mine = (await (
+      await scim(s, a.token, '/Users', 'POST', person('iso@dir.example'))
+    ).json()) as { id: string }
+    expect((await scim(s, b.token, `/Users/${mine.id}`)).status).toBe(404)
+    expect(
+      ((await (await scim(s, b.token, '/Users')).json()) as { totalResults: number }).totalResults
+    ).toBe(0)
+
+    await bindings.DB.prepare(
+      "UPDATE scim_credential SET scopes = 'scim.users.read' WHERE connection_id = ?"
+    )
+      .bind(a.connectionId)
+      .run()
+    expect((await scim(s, a.token, '/Users')).status).toBe(200)
+    expect((await scim(s, a.token, '/Users', 'POST', person('scope@dir.example'))).status).toBe(403)
+    expect((await scim(s, a.token, '/Groups')).status).toBe(403)
+  })
+
+  it('does not let a switched-off person rejoin the team', async () => {
+    const s = setup()
+    const { owner, team, token } = await connect(s)
+    const email = 'rejoin@dir.example'
+    const made = (await (await scim(s, token, '/Users', 'POST', person(email))).json()) as {
+      id: string
+    }
+    await scim(s, token, `/Users/${made.id}`, 'PATCH', {
+      schemas: [PATCH],
+      Operations: [{ op: 'replace', path: 'active', value: false }]
+    })
+    // Lift the suspension, as if they had other access; the invitation must still be refused.
+    await bindings.DB.prepare('UPDATE user SET banned = 0 WHERE email = ?').bind(email).run()
+    const before = s.sent.length
+    await s.call('/api/auth/organization/invite-member', {
+      method: 'POST',
+      headers: { cookie: owner, ...json },
+      body: JSON.stringify({ email, role: 'member', organizationId: team.id })
+    })
+    const id = /accept-invitation\/([\w-]+)/.exec(s.sent[before]!.text)![1]!
+    const cookie = await signIn(s, email)
+    const accept = await s.call('/api/auth/organization/accept-invitation', {
+      method: 'POST',
+      headers: { cookie, ...json },
+      body: JSON.stringify({ invitationId: id })
+    })
+    expect(accept.status).toBeGreaterThanOrEqual(400)
+    expect(await memberOf(team.id, email)).toBe(false)
+  })
+
+  it('removes the directory records with the connection and with the team', async () => {
+    const s = setup()
+    const { owner, team, connectionId, token } = await connect(s)
+    await scim(s, token, '/Users', 'POST', person('gone@dir.example'))
+    const removed = await s.call(`/api/scim-connections/${connectionId}`, {
+      method: 'DELETE',
+      headers: { cookie: owner }
+    })
+    expect(removed.status).toBe(204)
+    expect((await scim(s, token, '/Users')).status).toBe(401)
+    const rows = await bindings.DB.prepare(
+      'SELECT COUNT(*) AS n FROM scim_user WHERE connection_id = ?'
+    )
+      .bind(connectionId)
+      .first<{ n: number }>()
+    expect(rows!.n).toBe(0)
+    // The sign-in account and the team membership stay.
+    expect(
+      await bindings.DB.prepare('SELECT id FROM user WHERE email = ?')
+        .bind('gone@dir.example')
+        .first()
+    ).not.toBeNull()
+    expect(await memberOf(team.id, 'gone@dir.example')).toBe(true)
+  })
+
+  it('does not recreate an account the person deleted, until an owner allows it', async () => {
+    const s = setup()
+    const { owner, team, connectionId, token } = await connect(s)
+    const email = `tomb-${Date.now()}@dir.example`
+    expect((await scim(s, token, '/Users', 'POST', person(email))).status).toBe(201)
+    const cookie = await signIn(s, email)
+    await s.call('/api/account', {
+      method: 'DELETE',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ confirmEmail: email })
+    })
+    await deleteDueAccounts(createDb(bindings.DB), Date.now() + 30 * 86_400_000)
+    const gone = await bindings.DB.prepare('SELECT id FROM user WHERE email = ?')
+      .bind(email)
+      .first()
+    expect(gone).toBeNull()
+    // The directory's next sync is refused, and what is kept is a hash, not the address.
+    const refused = await scim(s, token, '/Users', 'POST', person(email))
+    expect(refused.status).toBe(409)
+    const kept = await bindings.DB.prepare(
+      'SELECT email_hash FROM scim_tombstone WHERE organization_id = ?'
+    )
+      .bind(team.id)
+      .all<{ email_hash: string }>()
+    expect(kept.results).toHaveLength(1)
+    expect(kept.results[0]!.email_hash).not.toContain('tomb-')
+
+    const listed = (await (
+      await s.call(`/api/scim-connections?organizationId=${team.id}`, {
+        headers: { cookie: owner }
+      })
+    ).json()) as { connections: { blocked: number }[] }
+    expect(listed.connections[0]!.blocked).toBe(1)
+    const cleared = await s.call(`/api/scim-connections/${connectionId}/tombstones`, {
+      method: 'DELETE',
+      headers: { cookie: owner }
+    })
+    expect(cleared.status).toBe(204)
+    expect((await scim(s, token, '/Users', 'POST', person(email))).status).toBe(201)
+  })
+
+  it('only provisions and re-addresses accounts at a domain the team has proven', async () => {
+    const s = setup()
+    const { team, token } = await connect(s)
+    // A stranger's address at some other domain: no account is made and nobody is added.
+    const stranger = `victim-${Date.now()}@gmail.example`
+    const refused = await scim(s, token, '/Users', 'POST', person(stranger))
+    expect(refused.status).toBe(403)
+    expect(
+      await bindings.DB.prepare('SELECT id FROM user WHERE email = ?').bind(stranger).first()
+    ).toBeNull()
+    expect(await memberOf(team.id, stranger)).toBe(false)
+
+    // At the proven domain it works, and the address cannot be moved to another domain afterwards.
+    const email = `ok-${Date.now()}@dir.example`
+    const created = (await (await scim(s, token, '/Users', 'POST', person(email))).json()) as {
+      id: string
+    }
+    const cookie = await signIn(s, email)
+    const moved = await scim(s, token, `/Users/${created.id}`, 'PATCH', {
+      schemas: [PATCH],
+      Operations: [
+        {
+          op: 'replace',
+          path: 'emails',
+          value: [{ value: 'attacker@evil.example', primary: true, type: 'work' }]
+        }
+      ]
+    })
+    expect(moved.status).toBe(403)
+    const still = await bindings.DB.prepare(
+      'SELECT email FROM user WHERE id = (SELECT user_id FROM scim_user WHERE id = ?)'
+    )
+      .bind(created.id)
+      .first<{ email: string }>()
+    expect(still?.email).toBe(email)
+    expect((await s.call('/api/preferences', { headers: { cookie } })).status).toBe(200)
+
+    // Inside the domain it is allowed, and the old sign-ins end.
+    const renamed = `renamed-${Date.now()}@dir.example`
+    const ok = await scim(s, token, `/Users/${created.id}`, 'PATCH', {
+      schemas: [PATCH],
+      Operations: [
+        { op: 'replace', path: 'emails', value: [{ value: renamed, primary: true, type: 'work' }] }
+      ]
+    })
+    expect(ok.status).toBe(200)
+    expect((await s.call('/api/preferences', { headers: { cookie } })).status).toBe(401)
+  })
+
+  it('makes people in a group team admins only when an owner says so, and takes it back', async () => {
+    const s = setup()
+    const { owner, team, connectionId, token } = await connect(s)
+    const email = `role-${Date.now()}@dir.example`
+    const created = (await (await scim(s, token, '/Users', 'POST', person(email))).json()) as {
+      id: string
+    }
+    const group = (await (
+      await scim(s, token, '/Groups', 'POST', {
+        schemas: [G],
+        displayName: 'Admins',
+        members: [{ value: created.id }]
+      })
+    ).json()) as { id: string }
+    const role = async (): Promise<string | undefined> =>
+      (
+        await bindings.DB.prepare(
+          'SELECT m.role FROM member m JOIN user u ON u.id = m.user_id WHERE m.organization_id = ? AND u.email = ?'
+        )
+          .bind(team.id, email)
+          .first<{ role: string }>()
+      )?.role
+    // A group grants nothing by default.
+    expect(await role()).toBe('member')
+
+    // Nobody but a team owner can turn it on.
+    const member = await signIn(s, email)
+    const refused = await s.call(`/api/scim-connections/${connectionId}/groups/${group.id}`, {
+      method: 'PUT',
+      headers: { cookie: member, ...json },
+      body: JSON.stringify({ grantsAdmin: true })
+    })
+    expect(refused.status).toBeGreaterThanOrEqual(400)
+    expect(await role()).toBe('member')
+
+    const on = await s.call(`/api/scim-connections/${connectionId}/groups/${group.id}`, {
+      method: 'PUT',
+      headers: { cookie: owner, ...json },
+      body: JSON.stringify({ grantsAdmin: true })
+    })
+    expect(on.status).toBe(204)
+    expect(await role()).toBe('admin')
+
+    // Leaving the group takes the rights back.
+    const patched = await scim(s, token, `/Groups/${group.id}`, 'PATCH', {
+      schemas: [PATCH],
+      Operations: [{ op: 'remove', path: 'members' }]
+    })
+    expect(patched.status).toBe(200)
+    expect(await role()).toBe('member')
+
+    // Back in the group, then switched off in the directory: rights go with the person.
+    await scim(s, token, `/Groups/${group.id}`, 'PATCH', {
+      schemas: [PATCH],
+      Operations: [{ op: 'add', path: 'members', value: [{ value: created.id }] }]
+    })
+    expect(await role()).toBe('admin')
+    await scim(s, token, `/Users/${created.id}`, 'PATCH', {
+      schemas: [PATCH],
+      Operations: [{ op: 'replace', path: 'active', value: false }]
+    })
+    expect(await memberOf(team.id, email)).toBe(false)
+  })
+
+  it('never changes a team owner through a group', async () => {
+    const s = setup()
+    const { ownerEmail, team, connectionId, token } = await connect(s)
+    const created = (await (await scim(s, token, '/Users', 'POST', person(ownerEmail))).json()) as {
+      id: string
+    }
+    const group = (await (
+      await scim(s, token, '/Groups', 'POST', {
+        schemas: [G],
+        displayName: 'Everyone',
+        members: [{ value: created.id }]
+      })
+    ).json()) as { id: string }
+    const sameOwner = await signIn(s, ownerEmail)
+    await s.call(`/api/scim-connections/${connectionId}/groups/${group.id}`, {
+      method: 'PUT',
+      headers: { cookie: sameOwner, ...json },
+      body: JSON.stringify({ grantsAdmin: true })
+    })
+    await scim(s, token, `/Groups/${group.id}`, 'DELETE')
+    const row = await bindings.DB.prepare(
+      'SELECT m.role FROM member m JOIN user u ON u.id = m.user_id WHERE m.organization_id = ? AND u.email = ?'
+    )
+      .bind(team.id, ownerEmail)
+      .first<{ role: string }>()
+    expect(row?.role).toBe('owner')
+  })
+})
+
+describe('AI apps (MCP): OAuth sign-in and the /api/mcp endpoint', () => {
+  const json = { 'content-type': 'application/json' }
+  const CLIENT_ID = 'https://assistant.example/client.json'
+  const REDIRECT = 'http://127.0.0.1:8765/callback'
+  const RESOURCE = `${ORIGIN}/api/mcp`
+  const b64url = (bytes: ArrayBuffer): string => {
+    let text = ''
+    for (const b of new Uint8Array(bytes)) text += String.fromCharCode(b)
+    return btoa(text).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '')
+  }
+
+  /** Pretend the AI app's metadata document is published at its own address. */
+  function publishClient(extra: Record<string, unknown> = {}): void {
+    const real = globalThis.fetch
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = input instanceof Request ? input.url : String(input)
+      if (url === CLIENT_ID)
+        return Response.json({
+          client_id: CLIENT_ID,
+          client_name: 'Test Assistant',
+          redirect_uris: [REDIRECT],
+          grant_types: ['authorization_code', 'refresh_token'],
+          response_types: ['code'],
+          token_endpoint_auth_method: 'none',
+          ...extra
+        })
+      return real(input, init)
+    })
+  }
+  afterEach(() => vi.restoreAllMocks())
+
+  async function authorize(
+    s: ReturnType<typeof setup>,
+    cookie: string,
+    scope = 'openid offline_access mcp:read'
+  ): Promise<{ response: Response; verifier: string }> {
+    const verifier = b64url(crypto.getRandomValues(new Uint8Array(32)).buffer)
+    const challenge = b64url(
+      await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))
+    )
+    const query = new URLSearchParams({
+      client_id: CLIENT_ID,
+      redirect_uri: REDIRECT,
+      response_type: 'code',
+      scope,
+      state: 'xyz',
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+      resource: RESOURCE
+    })
+    const response = await s.call(`/api/auth/oauth2/authorize?${query}`, {
+      headers: cookie ? { cookie } : {}
+    })
+    return { response, verifier }
+  }
+
+  /** Runs sign-in, consent and the token request; returns the tokens. */
+  async function getTokens(
+    s: ReturnType<typeof setup>,
+    cookie: string,
+    scope?: string,
+    tokenHeaders: Record<string, string> = {}
+  ): Promise<{ access_token: string; refresh_token: string; token_type?: string }> {
+    const { response, verifier } = await authorize(s, cookie, scope)
+    expect(response.status).toBe(302)
+    const consentUrl = new URL(response.headers.get('location')!, ORIGIN)
+    expect(consentUrl.pathname).toBe('/consent')
+    const accepted = await s.call('/api/auth/oauth2/consent', {
+      method: 'POST',
+      headers: { cookie, ...json },
+      body: JSON.stringify({ accept: true, oauth_query: consentUrl.search.slice(1) })
+    })
+    expect(accepted.status).toBe(200)
+    const { url } = (await accepted.json()) as { url: string }
+    const back = new URL(url)
+    expect(`${back.origin}${back.pathname}`).toBe(REDIRECT)
+    expect(back.searchParams.get('state')).toBe('xyz')
+    const token = await s.call('/api/auth/oauth2/token', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', ...tokenHeaders },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code: back.searchParams.get('code')!,
+        code_verifier: verifier,
+        client_id: CLIENT_ID,
+        redirect_uri: REDIRECT,
+        resource: RESOURCE
+      }).toString()
+    })
+    expect(token.status).toBe(200)
+    return (await token.json()) as {
+      access_token: string
+      refresh_token: string
+      token_type?: string
+    }
+  }
+
+  const call = (
+    s: ReturnType<typeof setup>,
+    token: string | null,
+    method: string,
+    params: Record<string, unknown> = {}
+  ): Promise<Response> =>
+    s.call('/api/mcp', {
+      method: 'POST',
+      headers: {
+        ...json,
+        accept: 'application/json, text/event-stream',
+        'mcp-protocol-version': '2026-07-28',
+        'mcp-method': method,
+        ...(typeof params.name === 'string' ? { 'mcp-name': params.name } : {}),
+        ...(token ? { authorization: `Bearer ${token}` } : {})
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method,
+        params: {
+          ...params,
+          _meta: {
+            'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+            'io.modelcontextprotocol/clientCapabilities': {}
+          }
+        }
+      })
+    })
+
+  it('publishes where to sign in, and challenges a call without a token', async () => {
+    const s = setup()
+    const meta = await s.call('/api/__discovery/.well-known/oauth-protected-resource/api/mcp')
+    expect(meta.status).toBe(200)
+    expect(await meta.json()).toMatchObject({ resource: RESOURCE })
+    const server = await s.call('/api/__discovery/.well-known/oauth-authorization-server/api/auth')
+    expect(server.status).toBe(200)
+    const body = (await server.json()) as Record<string, unknown>
+    expect(body.authorization_endpoint).toContain('/oauth2/authorize')
+    // Nobody can register a client by themselves.
+    expect(body.registration_endpoint).toBeUndefined()
+
+    const refused = await call(s, null, 'tools/list')
+    expect(refused.status).toBe(401)
+    expect(refused.headers.get('www-authenticate')).toContain('resource_metadata')
+  })
+
+  it('sends a signed-out person to sign in, then to the consent page', async () => {
+    publishClient()
+    const s = setup()
+    const { response } = await authorize(s, '')
+    expect(response.status).toBe(302)
+    const login = new URL(response.headers.get('location')!, ORIGIN)
+    expect(login.pathname).toBe('/sign-in')
+    expect(login.searchParams.get('client_id')).toBe(CLIENT_ID)
+    expect(login.searchParams.get('sig')).toBeTruthy()
+  })
+
+  it('runs the whole flow: consent, token, tools, refresh', async () => {
+    publishClient()
+    const s = setup()
+    const cookie = await signIn(s, 'mcp-person@example.com')
+    const tokens = await getTokens(s, cookie)
+    expect(tokens.refresh_token).toBeTruthy()
+
+    const list = await call(s, tokens.access_token, 'tools/list')
+    expect(list.status).toBe(200)
+    const listed = await list.text()
+    for (const name of ['whoami', 'list_teams', 'list_devices', 'recent_security_activity'])
+      expect(listed).toContain(name)
+
+    const who = await call(s, tokens.access_token, 'tools/call', { name: 'whoami', arguments: {} })
+    expect(who.status).toBe(200)
+    expect(await who.text()).toContain('mcp-person@example.com')
+
+    // The refresh token works once; the old one is dead afterwards.
+    const refresh = (token: string): Promise<Response> =>
+      s.call('/api/auth/oauth2/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'refresh_token',
+          refresh_token: token,
+          client_id: CLIENT_ID,
+          resource: RESOURCE
+        }).toString()
+      })
+    const next = await refresh(tokens.refresh_token)
+    expect(next.status).toBe(200)
+    expect((await refresh(tokens.refresh_token)).status).toBeGreaterThanOrEqual(400)
+  })
+
+  it('shows only the signed-in person’s data, and stops at once for a suspended person', async () => {
+    publishClient()
+    const s = setup()
+    const cookie = await signIn(s, 'mcp-suspend@example.com')
+    const tokens = await getTokens(s, cookie)
+    expect((await call(s, tokens.access_token, 'tools/list')).status).toBe(200)
+    await bindings.DB.prepare('UPDATE user SET banned = 1 WHERE email = ?')
+      .bind('mcp-suspend@example.com')
+      .run()
+    expect((await call(s, tokens.access_token, 'tools/list')).status).toBe(401)
+  })
+
+  it('refuses a token for another resource, a missing scope and a forged token', async () => {
+    publishClient()
+    const s = setup()
+    const cookie = await signIn(s, 'mcp-scope@example.com')
+    const { response } = await authorize(s, cookie, 'openid')
+    // Without the mcp:read scope the consent screen is still shown, but the token cannot call the tool endpoint.
+    expect(response.status).toBe(302)
+    expect((await call(s, 'not-a-token', 'tools/list')).status).toBe(401)
+    const parts = (await getTokens(s, await signIn(s, 'mcp-forge@example.com'))).access_token.split(
+      '.'
+    )
+    parts[2] = 'AAAA'
+    expect((await call(s, parts.join('.'), 'tools/list')).status).toBe(401)
+  })
+
+  it('lists approved apps, records approval and removal, and lets the person remove one', async () => {
+    publishClient()
+    const s = setup()
+    const cookie = await signIn(s, 'mcp-apps@example.com')
+    const tokens = await getTokens(s, cookie)
+
+    const listed = await s.call('/api/auth/oauth2/get-consents', { headers: { cookie } })
+    expect(listed.status).toBe(200)
+    const rows = (await listed.json()) as { id: string; clientId: string }[]
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.clientId).toBe(CLIENT_ID)
+
+    const named = await s.call(
+      `/api/auth/oauth2/public-client?client_id=${encodeURIComponent(CLIENT_ID)}`,
+      { headers: { cookie } }
+    )
+    expect(named.status).toBe(200)
+    expect(await named.json()).toMatchObject({ client_name: 'Test Assistant' })
+
+    const exported = (await (
+      await s.call('/api/account/export', { headers: { cookie } })
+    ).json()) as {
+      connectedApps: { clientId: string }[]
+      securityActivity: { type: string }[]
+    }
+    expect(exported.connectedApps.map((a) => a.clientId)).toEqual([CLIENT_ID])
+    expect(exported.securityActivity.map((e) => e.type)).toContain('app_connected')
+    expect(JSON.stringify(exported)).not.toContain(tokens.access_token)
+
+    const removed = await s.call('/api/auth/oauth2/delete-consent', {
+      method: 'POST',
+      headers: { cookie, ...json },
+      body: JSON.stringify({ id: rows[0]!.id })
+    })
+    expect(removed.status).toBe(200)
+    const after = (await (
+      await s.call('/api/auth/oauth2/get-consents', { headers: { cookie } })
+    ).json()) as unknown[]
+    expect(after).toHaveLength(0)
+  })
+
+  it('refuses a token without the mcp:read scope', async () => {
+    publishClient()
+    const s = setup()
+    const cookie = await signIn(s, 'mcp-noscope@example.com')
+    const tokens = await getTokens(s, cookie, 'openid offline_access')
+    expect((await call(s, tokens.access_token, 'tools/list')).status).toBe(403)
+  })
+
+  it('does not hand out a code for a bad redirect address or without PKCE', async () => {
+    const s = setup()
+    const cookie = await signIn(s, 'mcp-redirect@example.com')
+    const base = {
+      client_id: CLIENT_ID,
+      redirect_uri: REDIRECT,
+      response_type: 'code',
+      scope: 'openid mcp:read',
+      code_challenge: 'x'.repeat(43),
+      code_challenge_method: 'S256',
+      resource: RESOURCE
+    }
+    const location = async (query: Record<string, string>): Promise<string> => {
+      const r = await s.call(`/api/auth/oauth2/authorize?${new URLSearchParams(query)}`, {
+        headers: { cookie }
+      })
+      return r.headers.get('location') ?? ''
+    }
+    publishClient({ redirect_uris: ['javascript:alert(1)'] })
+    expect(await location({ ...base, redirect_uri: 'javascript:alert(1)' })).not.toContain(
+      '/consent'
+    )
+    vi.restoreAllMocks()
+    publishClient()
+    // A redirect address the app did not list.
+    expect(await location({ ...base, redirect_uri: 'https://evil.example/cb' })).not.toContain(
+      '/consent'
+    )
+    // No PKCE challenge.
+    const noPkce: Record<string, string> = { ...base }
+    delete noPkce.code_challenge
+    delete noPkce.code_challenge_method
+    expect(await location(noPkce)).not.toContain('/consent')
+  })
+
+  it('cuts an app off when the person is suspended or signs out everywhere', async () => {
+    publishClient()
+    const s = setup()
+    await signIn(s, 'mcp-boss@example.com')
+    await bindings.DB.prepare("UPDATE user SET role = 'admin' WHERE email = ?")
+      .bind('mcp-boss@example.com')
+      .run()
+    const staffCookie = await signIn(s, 'mcp-boss@example.com')
+    const victim = await signIn(s, 'mcp-victim@example.com')
+    await getTokens(s, victim)
+    const row = await bindings.DB.prepare('SELECT id FROM user WHERE email = ?')
+      .bind('mcp-victim@example.com')
+      .first<{ id: string }>()
+    const count = async (): Promise<number> =>
+      (await bindings.DB.prepare('SELECT COUNT(*) AS n FROM oauth_consent WHERE user_id = ?')
+        .bind(row!.id)
+        .first<{ n: number }>())!.n
+    expect(await count()).toBe(1)
+    const ban = await s.call('/api/auth/admin/ban-user', {
+      method: 'POST',
+      headers: { cookie: staffCookie, ...json },
+      body: JSON.stringify({ userId: row!.id })
+    })
+    expect(ban.status).toBe(200)
+    expect(await count()).toBe(0)
+    const refreshLeft = await bindings.DB.prepare(
+      'SELECT COUNT(*) AS n FROM oauth_refresh_token WHERE user_id = ?'
+    )
+      .bind(row!.id)
+      .first<{ n: number }>()
+    expect(refreshLeft!.n).toBe(0)
+
+    const other = await signIn(s, 'mcp-everywhere@example.com')
+    await getTokens(s, other)
+    const mine = await bindings.DB.prepare('SELECT id FROM user WHERE email = ?')
+      .bind('mcp-everywhere@example.com')
+      .first<{ id: string }>()
+    const out = await s.call('/api/auth/revoke-sessions', {
+      method: 'POST',
+      headers: { cookie: other, ...json },
+      body: '{}'
+    })
+    expect(out.status).toBe(200)
+    const left = await bindings.DB.prepare(
+      'SELECT COUNT(*) AS n FROM oauth_consent WHERE user_id = ?'
+    )
+      .bind(mine!.id)
+      .first<{ n: number }>()
+    expect(left!.n).toBe(0)
+  })
+
+  async function staffCookieFor(
+    s: ReturnType<typeof setup>,
+    email: string,
+    role: 'admin' | 'support'
+  ): Promise<string> {
+    await signIn(s, email)
+    await bindings.DB.prepare('UPDATE user SET role = ? WHERE email = ?').bind(role, email).run()
+    return signIn(s, email)
+  }
+
+  it('lets an admin list and switch off an AI app, and nobody else', async () => {
+    publishClient()
+    const s = setup()
+    const person = await signIn(s, 'mcp-adm-person@example.com')
+    const tokens = await getTokens(s, person)
+    expect((await call(s, tokens.access_token, 'tools/list')).status).toBe(200)
+
+    // Not staff, and support (read-only staff) are refused.
+    expect((await s.call('/api/admin/ai-apps', { headers: { cookie: person } })).status).toBe(403)
+    const support = await staffCookieFor(s, 'mcp-adm-support@example.com', 'support')
+    expect((await s.call('/api/admin/ai-apps', { headers: { cookie: support } })).status).toBe(403)
+    const refusedSwitch = await s.call('/api/admin/ai-apps/disable', {
+      method: 'POST',
+      headers: { cookie: support, ...json },
+      body: JSON.stringify({ clientId: CLIENT_ID })
+    })
+    expect(refusedSwitch.status).toBe(403)
+    expect((await s.call('/api/admin/ai-apps')).status).toBe(401)
+
+    const admin = await staffCookieFor(s, 'mcp-adm-boss@example.com', 'admin')
+    const listed = (await (
+      await s.call('/api/admin/ai-apps', { headers: { cookie: admin } })
+    ).json()) as { clientId: string; name: string; disabled: boolean; people: number }[]
+    const mine = listed.find((a) => a.clientId === CLIENT_ID)
+    expect(mine).toMatchObject({ name: 'Test Assistant', disabled: false })
+    expect(mine!.people).toBeGreaterThanOrEqual(1)
+
+    const unknown = await s.call('/api/admin/ai-apps/disable', {
+      method: 'POST',
+      headers: { cookie: admin, ...json },
+      body: JSON.stringify({ clientId: 'https://nobody.example/x.json' })
+    })
+    expect(unknown.status).toBe(404)
+    expect(
+      (
+        await s.call('/api/admin/ai-apps/delete', {
+          method: 'POST',
+          headers: { cookie: admin, ...json },
+          body: JSON.stringify({ clientId: CLIENT_ID })
+        })
+      ).status
+    ).toBe(404)
+
+    const off = await s.call('/api/admin/ai-apps/disable', {
+      method: 'POST',
+      headers: { cookie: admin, ...json },
+      body: JSON.stringify({ clientId: CLIENT_ID })
+    })
+    expect(off.status).toBe(200)
+
+    // The token that worked a moment ago is refused at once, its approvals are gone, and the app cannot start over.
+    expect((await call(s, tokens.access_token, 'tools/list')).status).toBe(401)
+    const left = await bindings.DB.prepare(
+      'SELECT (SELECT COUNT(*) FROM oauth_consent WHERE client_id = ?1) AS consents, (SELECT COUNT(*) FROM oauth_refresh_token WHERE client_id = ?1) AS refresh, (SELECT COUNT(*) FROM oauth_access_token WHERE client_id = ?1) AS access'
+    )
+      .bind(CLIENT_ID)
+      .first<{ consents: number; refresh: number; access: number }>()
+    expect(left).toEqual({ consents: 0, refresh: 0, access: 0 })
+    const again = await authorize(s, person)
+    expect(again.response.headers.get('location') ?? '').not.toContain('/consent')
+    const listedOff = (await (
+      await s.call('/api/admin/ai-apps', { headers: { cookie: admin } })
+    ).json()) as { clientId: string; disabled: boolean }[]
+    expect(listedOff.find((a) => a.clientId === CLIENT_ID)!.disabled).toBe(true)
+
+    // Switching it on lets people approve it again.
+    const on = await s.call('/api/admin/ai-apps/enable', {
+      method: 'POST',
+      headers: { cookie: admin, ...json },
+      body: JSON.stringify({ clientId: CLIENT_ID })
+    })
+    expect(on.status).toBe(200)
+    const back = await authorize(s, person)
+    expect(new URL(back.response.headers.get('location')!, ORIGIN).pathname).toBe('/consent')
+
+    const events = await bindings.DB.prepare(
+      "SELECT type, actor_id FROM audit_event WHERE type IN ('ai_app_disabled', 'ai_app_enabled') ORDER BY at"
+    ).all<{ type: string; actor_id: string | null }>()
+    expect(events.results.map((e) => e.type)).toEqual(['ai_app_disabled', 'ai_app_enabled'])
+    expect(events.results.every((e) => e.actor_id)).toBe(true)
+    await forgetClient()
+  })
+
+  it('keeps the plugin client routes staff-only and nobody can create a client by hand', async () => {
+    const s = setup()
+    const person = await signIn(s, 'mcp-routes-person@example.com')
+    const admin = await staffCookieFor(s, 'mcp-routes-boss@example.com', 'admin')
+    const list = (cookie: string): Promise<Response> =>
+      s.call('/api/auth/oauth2/get-clients', { headers: { cookie } })
+    expect((await list(person)).status).toBeGreaterThanOrEqual(400)
+    expect((await list(admin)).status).toBe(200)
+    for (const cookie of [person, admin]) {
+      const created = await s.call('/api/auth/oauth2/create-client', {
+        method: 'POST',
+        headers: { cookie, ...json },
+        body: JSON.stringify({ redirect_uris: ['https://evil.example/cb'] })
+      })
+      expect(created.status).toBeGreaterThanOrEqual(400)
+    }
+    const registered = await s.call('/api/auth/oauth2/register', {
+      method: 'POST',
+      headers: json,
+      body: JSON.stringify({ redirect_uris: ['https://evil.example/cb'] })
+    })
+    expect(registered.status).toBeGreaterThanOrEqual(400)
+  })
+
+  it('answers the extra plugin endpoints only to a caller that proves who it is, and rate limits them', async () => {
+    const s = setup()
+    const form = { 'content-type': 'application/x-www-form-urlencoded' }
+    const body = new URLSearchParams({ token: 'not-a-token', client_id: CLIENT_ID }).toString()
+    for (const path of ['/api/auth/oauth2/introspect', '/api/auth/oauth2/revoke']) {
+      const r = await s.call(path, { method: 'POST', headers: form, body })
+      // Never a success for a stranger, and never a crash.
+      expect([400, 401, 403, 404]).toContain(r.status)
+    }
+    const logout = await s.call(
+      `/api/auth/oauth2/end-session?client_id=${encodeURIComponent(CLIENT_ID)}`
+    )
+    // Not offered at all: for an unknown app id it would make the Worker fetch that app's address.
+    expect(logout.status).toBe(404)
+
+    let introspectLimited = 0
+    for (let i = 0; i < 24; i++) {
+      const r = await s.call('/api/auth/oauth2/introspect', { method: 'POST', headers: form, body })
+      if (r.status === 429) introspectLimited++
+    }
+    expect(introspectLimited).toBeGreaterThan(0)
+  })
+
+  /** An app's stored settings are kept between sign-ins, so a test that changes them removes them afterwards. */
+  async function forgetClient(): Promise<void> {
+    await bindings.DB.prepare('DELETE FROM oauth_client WHERE client_id = ?').bind(CLIENT_ID).run()
+  }
+
+  async function dpopKey(): Promise<{
+    proof: (method: string, url: string, token?: string) => Promise<string>
+  }> {
+    const pair = (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
+      'sign'
+    ])) as CryptoKeyPair
+    const jwk = (await crypto.subtle.exportKey('jwk', pair.publicKey)) as JsonWebKey
+    const enc = (value: unknown): string =>
+      b64url(new TextEncoder().encode(JSON.stringify(value)).buffer as ArrayBuffer)
+    return {
+      proof: async (method, url, token) => {
+        const head = enc({
+          typ: 'dpop+jwt',
+          alg: 'ES256',
+          jwk: { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y }
+        })
+        const body = enc({
+          jti: crypto.randomUUID(),
+          htm: method,
+          htu: url,
+          iat: Math.floor(Date.now() / 1000),
+          ...(token
+            ? {
+                ath: b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token)))
+              }
+            : {})
+        })
+        const sig = await crypto.subtle.sign(
+          { name: 'ECDSA', hash: 'SHA-256' },
+          pair.privateKey,
+          new TextEncoder().encode(`${head}.${body}`)
+        )
+        return `${head}.${body}.${b64url(sig)}`
+      }
+    }
+  }
+
+  it('can bind a token to the app own key (DPoP), so a stolen token alone is useless', async () => {
+    publishClient({ dpop_bound_access_tokens: true })
+    const s = setup()
+    const cookie = await signIn(s, 'mcp-dpop@example.com')
+    const key = await dpopKey()
+    const tokenUrl = `${ORIGIN}/api/auth/oauth2/token`
+    const tokens = await getTokens(s, cookie, undefined, {
+      dpop: await key.proof('POST', tokenUrl)
+    })
+    expect(String(tokens.token_type).toLowerCase()).toBe('dpop')
+
+    const send = (headers: Record<string, string>): Promise<Response> =>
+      s.call('/api/mcp', {
+        method: 'POST',
+        headers: {
+          ...json,
+          accept: 'application/json, text/event-stream',
+          'mcp-protocol-version': '2026-07-28',
+          'mcp-method': 'tools/list',
+          ...headers
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/list',
+          params: {
+            _meta: {
+              'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+              'io.modelcontextprotocol/clientCapabilities': {}
+            }
+          }
+        })
+      })
+    // Without the proof, the token is no good as a plain bearer token.
+    expect((await send({ authorization: `Bearer ${tokens.access_token}` })).status).toBe(401)
+    expect(
+      (
+        await send({
+          authorization: `DPoP ${tokens.access_token}`,
+          dpop: await key.proof('POST', RESOURCE, tokens.access_token)
+        })
+      ).status
+    ).toBe(200)
+    // A proof made with another key does not work.
+    const thief = await dpopKey()
+    expect(
+      (
+        await send({
+          authorization: `DPoP ${tokens.access_token}`,
+          dpop: await thief.proof('POST', RESOURCE, tokens.access_token)
+        })
+      ).status
+    ).toBe(401)
+    await forgetClient()
+  })
+
+  it('keeps only a hash of an app refresh token in the database', async () => {
+    publishClient()
+    const s = setup()
+    const cookie = await signIn(s, 'mcp-hash@example.com')
+    const tokens = await getTokens(s, cookie, 'openid mcp:read offline_access')
+    expect(tokens.refresh_token).toBeTruthy()
+    const rows = (
+      await bindings.DB.prepare('SELECT token FROM oauth_refresh_token').all<{
+        token: string
+      }>()
+    ).results.map((r) => r.token)
+    expect(rows.length).toBeGreaterThan(0)
+    // A leaked database must not hand out working refresh tokens.
+    expect(rows).not.toContain(tokens.refresh_token)
+    await forgetClient()
+  })
+
+  it('offers the sign-out tool only to an app that was given the write permission', async () => {
+    publishClient()
+    const s = setup()
+    const cookie = await signIn(s, 'mcp-write@example.com')
+    const readOnly = await getTokens(s, cookie, 'openid mcp:read')
+    expect(await (await call(s, readOnly.access_token, 'tools/list')).text()).not.toContain(
+      'sign_out_device'
+    )
+    // Asking for it anyway is a step-up challenge (RFC 6750), so the app can ask the person to approve again.
+    const denied = await call(s, readOnly.access_token, 'tools/call', {
+      name: 'sign_out_device',
+      arguments: { id: 'x' }
+    })
+    expect(denied.status).toBe(403)
+    expect(denied.headers.get('www-authenticate')).toMatch(
+      /error="insufficient_scope".*scope="mcp:write"/
+    )
+    const full = await getTokens(s, cookie, 'openid mcp:read mcp:write')
+    expect(await (await call(s, full.access_token, 'tools/list')).text()).toContain(
+      'sign_out_device'
+    )
+
+    await signIn(s, 'mcp-write-other@example.com')
+    const otherRow = await bindings.DB.prepare(
+      'SELECT s.id FROM session s JOIN user u ON u.id = s.user_id WHERE u.email = ?'
+    )
+      .bind('mcp-write-other@example.com')
+      .first<{ id: string }>()
+    const sessionsOf = async (): Promise<string[]> =>
+      (
+        await bindings.DB.prepare(
+          'SELECT s.id FROM session s JOIN user u ON u.id = s.user_id WHERE u.email = ?'
+        )
+          .bind('mcp-write@example.com')
+          .all<{ id: string }>()
+      ).results.map((r) => r.id)
+    const mine = await sessionsOf()
+    expect(mine.length).toBeGreaterThan(0)
+    const target = mine[0]!
+    const signOut = (id: string): Promise<Response> =>
+      call(s, full.access_token, 'tools/call', { name: 'sign_out_device', arguments: { id } })
+    // Someone else's device: nothing happens.
+    expect(await (await signOut(otherRow!.id)).text()).toContain('false')
+    const still = await bindings.DB.prepare('SELECT id FROM session WHERE id = ?')
+      .bind(otherRow!.id)
+      .first()
+    expect(still).not.toBeNull()
+    // Your own: it is gone.
+    expect(await (await signOut(target)).text()).toContain('true')
+    expect(await sessionsOf()).not.toContain(target)
+  })
+
+  it('signs in an app without a browser with a code typed on the site', async () => {
+    publishClient({
+      grant_types: [
+        'authorization_code',
+        'urn:ietf:params:oauth:grant-type:device_code',
+        'refresh_token'
+      ]
+    })
+    const s = setup()
+    const started = await s.call('/api/auth/device/code', {
+      method: 'POST',
+      headers: json,
+      body: JSON.stringify({ client_id: CLIENT_ID, scope: 'openid mcp:read', resource: RESOURCE })
+    })
+    expect(started.status).toBe(200)
+    const code = (await started.json()) as {
+      device_code: string
+      user_code: string
+      verification_uri: string
+    }
+    expect(new URL(code.verification_uri).pathname).toBe('/device')
+
+    // Nobody can approve it without signing in.
+    const anonymous = await s.call('/api/auth/device/approve', {
+      method: 'POST',
+      headers: json,
+      body: JSON.stringify({ userCode: code.user_code })
+    })
+    expect(anonymous.status).toBeGreaterThanOrEqual(400)
+
+    const cookie = await signIn(s, 'mcp-device@example.com')
+    const seen = await s.call(`/api/auth/device?user_code=${code.user_code}`, {
+      headers: { cookie }
+    })
+    expect(await seen.json()).toMatchObject({ client_id: CLIENT_ID, status: 'pending' })
+    const approved = await s.call('/api/auth/device/approve', {
+      method: 'POST',
+      headers: { cookie, ...json },
+      body: JSON.stringify({ userCode: code.user_code })
+    })
+    expect(approved.status).toBe(200)
+
+    const token = await s.call('/api/auth/oauth2/token', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+        device_code: code.device_code,
+        client_id: CLIENT_ID,
+        resource: RESOURCE
+      }).toString()
+    })
+    expect(token.status).toBe(200)
+    const { access_token } = (await token.json()) as { access_token: string }
+    expect((await call(s, access_token, 'tools/list')).status).toBe(200)
+    await forgetClient()
+  })
+
+  it('limits the endpoints that fetch an app address, on the paths Better Auth really uses', async () => {
+    const s = setup()
+    const ip = `203.0.113.${Math.floor(Math.random() * 200) + 1}`
+    const hit = async (path: string): Promise<number> =>
+      (
+        await s.call(path, {
+          method: 'POST',
+          headers: { ...json, 'x-forwarded-for': ip },
+          body: '{}'
+        })
+      ).status
+    for (const [path, max] of [
+      ['/api/auth/device/code', 10],
+      ['/api/auth/oauth2/token', 20]
+    ] as const) {
+      let last = 0
+      for (let i = 0; i < max + 2; i++) last = await hit(path)
+      expect(last, path).toBe(429)
+    }
+  })
+
+  it('keeps app approvals through a time-limited suspension, and removes them for a permanent one', async () => {
+    publishClient()
+    const s = setup()
+    await signIn(s, 'mcp-timed-boss@example.com')
+    await bindings.DB.prepare("UPDATE user SET role = 'admin' WHERE email = ?")
+      .bind('mcp-timed-boss@example.com')
+      .run()
+    const staffCookie = await signIn(s, 'mcp-timed-boss@example.com')
+    const consents = async (email: string): Promise<number> =>
+      (await bindings.DB.prepare(
+        'SELECT COUNT(*) AS n FROM oauth_consent c JOIN user u ON u.id = c.user_id WHERE u.email = ?'
+      )
+        .bind(email)
+        .first<{ n: number }>())!.n
+    for (const [email, banExpiresIn, expected] of [
+      ['mcp-timed@example.com', 3600, 1],
+      ['mcp-forever@example.com', undefined, 0]
+    ] as const) {
+      const cookie = await signIn(s, email)
+      await getTokens(s, cookie)
+      const row = await bindings.DB.prepare('SELECT id FROM user WHERE email = ?')
+        .bind(email)
+        .first<{ id: string }>()
+      const ban = await s.call('/api/auth/admin/ban-user', {
+        method: 'POST',
+        headers: { cookie: staffCookie, ...json },
+        body: JSON.stringify({ userId: row!.id, banExpiresIn })
+      })
+      expect(ban.status).toBe(200)
+      expect(await consents(email), email).toBe(expected)
+    }
+  })
+
+  it('does not let people create or list clients by hand, or register one', async () => {
+    const s = setup()
+    const cookie = await signIn(s, 'mcp-clients@example.com')
+    for (const [path, method] of [
+      ['/api/auth/oauth2/create-client', 'POST'],
+      ['/api/auth/oauth2/register', 'POST'],
+      ['/api/auth/oauth2/get-clients', 'GET']
+    ] as const) {
+      const r = await s.call(path, {
+        method,
+        headers: { cookie, ...json },
+        body: method === 'POST' ? JSON.stringify({ redirect_uris: [REDIRECT] }) : undefined
+      })
+      expect(r.status, path).toBeGreaterThanOrEqual(400)
+    }
+  })
+
+  it('refuses an app whose address is not a public https page', async () => {
+    const s = setup()
+    const cookie = await signIn(s, 'mcp-bad@example.com')
+    const query = new URLSearchParams({
+      client_id: 'http://127.0.0.1/client.json',
+      redirect_uri: REDIRECT,
+      response_type: 'code',
+      scope: 'openid mcp:read',
+      code_challenge: 'x'.repeat(43),
+      code_challenge_method: 'S256',
+      resource: RESOURCE
+    })
+    const r = await s.call(`/api/auth/oauth2/authorize?${query}`, { headers: { cookie } })
+    expect(new URL(r.headers.get('location') ?? ORIGIN, ORIGIN).searchParams.get('code')).toBeNull()
+    expect(r.status === 302 ? (r.headers.get('location') ?? '') : '').not.toContain('/consent')
   })
 })

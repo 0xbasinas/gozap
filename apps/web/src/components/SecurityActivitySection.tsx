@@ -24,7 +24,22 @@ const NAMES: Record<string, string> = {
   member_invited: 'Someone was invited to a team',
   invitation_accepted: 'Joined a team',
   member_removed: 'A team member was removed',
-  team_role_changed: 'A team role was changed'
+  team_role_changed: 'A team role was changed',
+  sso_provider_added: 'A company sign-in was added',
+  sso_provider_updated: 'A company sign-in was changed',
+  sso_provider_deleted: 'A company sign-in was removed',
+  sso_user_provisioned: 'Account created through company sign-in',
+  app_connected: 'An AI app was allowed to read your account',
+  app_disconnected: 'An AI app was removed',
+  ai_app_disabled: 'Staff switched off an AI app',
+  ai_app_enabled: 'Staff switched an AI app back on',
+  scim_connection_created: 'A directory sync was set up',
+  scim_connection_removed: 'A directory sync was removed',
+  scim_token_created: 'A directory sync token was made',
+  scim_token_revoked: 'A directory sync token was revoked',
+  scim_user_provisioned: 'Added by your company directory',
+  scim_user_deactivated: 'Switched off by your company directory',
+  scim_user_reactivated: 'Switched back on by your company directory'
 }
 
 const eventName = (type: string): string => NAMES[type] ?? type.replaceAll('_', ' ')

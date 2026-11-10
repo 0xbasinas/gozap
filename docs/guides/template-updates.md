@@ -49,7 +49,7 @@ branch, so CI fails until you resolve them. "Could not apply" usually means your
 changed; look at the template's version and copy what you want.
 
 Merging an update that touches `apps/desktop/src/`, the build config or dependencies **publishes a release** (see
-[releasing.md](releasing.md)); the pull request says so. Auto-merge is never turned on for you.
+[releasing](../releasing/overview.md)); the pull request says so. Auto-merge is never turned on for you.
 
 Options: `--ref <branch|tag|sha>` to update to something other than the template's default branch, `--no-pr` to stop after the
 commit (nothing is pushed), `--no-install` to skip `pnpm install`.

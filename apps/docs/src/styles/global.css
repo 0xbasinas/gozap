@@ -1,0 +1,10 @@
+/*
+ * Tailwind for the docs, with the web app's own theme file (packages/ui/src/theme.css) as the single source of colours.
+ * See https://starlight.astro.build/guides/css-and-tailwind/ for the layer order and the two Starlight imports.
+ */
+@layer base, starlight, theme, components, utilities;
+
+@import '@astrojs/starlight-tailwind';
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities);
+@import '@repo/ui/theme.css';

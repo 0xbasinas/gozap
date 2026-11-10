@@ -1,0 +1,1003 @@
+/*
+ * Maps the web app's colour tokens (--background, --foreground, --primary, ... from @repo/ui/theme.css) onto
+ * Starlight's variables, so the docs follow the web app: change a colour there and it changes here.
+ * Starlight switches theme with data-theme; the web theme uses a "dark" class. The head script in astro.config.mjs
+ * keeps that class in step. The accent presets (data-accent) work here too, as they do in the app.
+ */
+:root,
+:root[data-theme='dark'],
+:root[data-theme='light'] {
+  --sl-color-black: var(--background);
+  --sl-color-white: var(--foreground);
+  --sl-color-gray-1: color-mix(in oklab, var(--foreground) 90%, var(--background));
+  --sl-color-gray-2: color-mix(in oklab, var(--foreground) 78%, var(--background));
+  --sl-color-gray-3: var(--muted-foreground);
+  --sl-color-gray-4: color-mix(in oklab, var(--foreground) 40%, var(--background));
+  --sl-color-gray-5: color-mix(in oklab, var(--foreground) 14%, var(--background));
+  --sl-color-gray-6: var(--card);
+  --sl-color-gray-7: color-mix(in oklab, var(--card) 55%, var(--background));
+  --sl-color-hairline: var(--border);
+  --sl-color-hairline-light: var(--border);
+  --sl-color-hairline-shade: var(--border);
+
+  /* No accent colour: the current page, links and buttons use the app's plain black, white and grey. */
+  --docs-active: var(--foreground);
+  --docs-active-bg: var(--secondary);
+  --sl-color-accent: var(--docs-active);
+  --sl-color-accent-low: var(--docs-active-bg);
+  --sl-color-accent-high: var(--docs-active);
+  --sl-color-text-accent: var(--docs-active);
+  --sl-color-text: var(--sl-color-gray-2);
+  --sl-color-bg-inline-code: var(--secondary);
+  --sl-color-bg-nav: var(--background);
+  --sl-color-bg-sidebar: var(--background);
+  --sl-color-bg: var(--background);
+  --sl-color-backdrop-overlay: color-mix(in oklab, var(--background) 70%, transparent);
+  --sl-focus-ring: 2px solid var(--ring);
+}
+
+/* Header and sidebar: quiet, with the app's thin borders. */
+header.header {
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(8px);
+}
+/* The inner row of the header must not draw a second line. */
+header.header .header {
+  border-bottom: 0;
+}
+.sidebar-pane {
+  border-inline-end: 1px solid var(--border);
+}
+.site-title {
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+/* Sidebar: bold group headings, roomy items, the current page in blue on a soft periwinkle pill. */
+.sidebar-content {
+  gap: 1.25rem;
+}
+.sidebar-content details > summary,
+.sidebar-content .large {
+  font-size: var(--sl-text-base);
+  font-weight: 600;
+  color: var(--foreground);
+}
+.sidebar-content details li,
+.sidebar-content li {
+  margin-inline-start: 0 !important;
+  border-inline-start: 0 !important;
+  padding-inline-start: 0 !important;
+}
+.sidebar-content ul ul {
+  margin-inline-start: 0;
+  padding-inline-start: 0;
+}
+.sidebar-content a {
+  border-radius: calc(var(--radius) - 2px);
+  padding: 0.5rem 0.75rem;
+  font-size: var(--sl-text-base);
+  color: var(--sl-color-gray-3);
+}
+.sidebar-content a:hover {
+  color: var(--foreground);
+  background: var(--secondary);
+}
+.sidebar-content a[aria-current='page'] {
+  background: var(--docs-active-bg);
+  color: var(--docs-active);
+  font-weight: 500;
+}
+.sidebar-content .sl-badge {
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--secondary);
+  color: var(--muted-foreground);
+  padding-inline: 0.5rem;
+}
+
+/* Content */
+.sl-markdown-content h1,
+.sl-markdown-content h2,
+.sl-markdown-content h3 {
+  letter-spacing: -0.02em;
+}
+.sl-markdown-content a:not(:where(.not-content *)) {
+  text-underline-offset: 0.2em;
+}
+.sl-markdown-content :not(pre) > code {
+  border-radius: 0.375rem;
+  border: 1px solid var(--border);
+  padding: 0.1em 0.35em;
+}
+.sl-markdown-content table {
+  display: block;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.sl-markdown-content :is(th, td) {
+  border-color: var(--border);
+}
+.sl-markdown-content tr:nth-child(2n) {
+  background: transparent;
+}
+.sl-markdown-content blockquote {
+  border-inline-start-color: var(--ring);
+}
+
+/* Cards */
+.starlight-card,
+.sl-link-card {
+  border-radius: var(--radius);
+  border-color: var(--border);
+  background: var(--card);
+}
+.sl-link-card:hover {
+  border-color: var(--ring);
+}
+
+/* Buttons: the app's primary and outline buttons. */
+.sl-link-button {
+  border-radius: calc(var(--radius) - 2px);
+  font-weight: 500;
+}
+.sl-link-button.primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+}
+.sl-link-button.secondary,
+.sl-link-button.minimal {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--foreground);
+}
+
+/* Home page: centred and text only, like the web app's home page. */
+[data-has-hero] .hero {
+  grid-template-columns: 1fr;
+  justify-items: center;
+  text-align: center;
+  padding-block: 3rem 2rem;
+}
+[data-has-hero] .hero > img,
+[data-has-hero] .hero > .hero-html {
+  display: none;
+}
+[data-has-hero] .hero .sl-flex {
+  justify-content: center;
+}
+[data-has-hero] .hero h1 {
+  letter-spacing: -0.03em;
+}
+[data-has-hero] .hero .copy {
+  align-items: center;
+}
+[data-has-hero] .hero .tagline {
+  text-align: center;
+  max-width: 40rem;
+}
+
+/* Card icons: Starlight tints each card differently; here they all use the neutral theme colours. */
+.card {
+  --sl-card-border: var(--border) !important;
+  --sl-card-bg: var(--secondary) !important;
+}
+
+site-search button {
+  border-radius: calc(var(--radius) - 2px);
+  border-color: var(--border);
+}
+
+/* Mermaid diagrams (see src/components/Mermaid.astro): the same card look as other blocks, scrolling on small screens. */
+.mermaid-diagram {
+  display: flex;
+  justify-content: center;
+  margin-block: 1.5rem;
+  padding: 1rem;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+.mermaid-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+.mermaid-error {
+  color: var(--destructive);
+  font-size: var(--sl-text-sm);
+}
+
+/* Code blocks (Expressive Code): the card colour and thin border used everywhere else, no tinted frames. */
+.expressive-code {
+  --ec-brdCol: var(--border);
+  --ec-codeBg: var(--card);
+  --ec-frm-edBg: var(--card);
+  --ec-frm-edTabBarBg: var(--secondary);
+  --ec-frm-edActTabBg: var(--card);
+  --ec-frm-edActTabIndTopCol: transparent;
+  --ec-frm-edActTabIndBtmCol: var(--foreground);
+  --ec-frm-edTabsMargInlStart: 0;
+  --ec-frm-trmBg: var(--card);
+  --ec-frm-trmTtbBg: var(--secondary);
+  --ec-frm-trmTtbBrdBtmCol: var(--border);
+  --ec-frm-trmTtbDotsFg: var(--muted-foreground);
+  --ec-frm-trmTtbDotsOpa: 0.5;
+  --ec-frm-shdCol: transparent;
+  --ec-uiSelBg: var(--secondary);
+}
+.expressive-code .frame pre,
+.expressive-code .frame .header {
+  border-color: var(--border);
+}
+
+/* Asides (note, tip, caution, danger): all plain grey boxes with a dark edge instead of four colours. */
+.starlight-aside {
+  --sl-color-asides-text-accent: var(--foreground);
+  color: var(--foreground);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-inline-start: 3px solid var(--muted-foreground);
+  border-radius: var(--radius);
+}
+.starlight-aside__title {
+  color: var(--foreground);
+}
+
+/* Steps, tabs, file trees, badges and the table of contents: grey and white only. */
+.sl-steps > li::before {
+  background: var(--secondary);
+  color: var(--foreground);
+  border: 1px solid var(--border);
+}
+.sl-steps > li::after {
+  background: var(--border);
+}
+starlight-tabs [role='tab'][aria-selected='true'] {
+  color: var(--foreground);
+  border-color: var(--foreground);
+}
+.sl-badge {
+  background: var(--secondary);
+  border-color: var(--border);
+  color: var(--foreground);
+}
+starlight-toc nav > h2,
+mobile-starlight-toc summary {
+  font-weight: 600;
+  color: var(--foreground);
+}
+starlight-toc a[aria-current='true'] {
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+/* Tables fit the column: long addresses and names wrap instead of pushing the table past the edge. */
+.sl-markdown-content table {
+  width: 100%;
+}
+.sl-markdown-content :is(td, th) {
+  overflow-wrap: anywhere;
+}
+.sl-markdown-content :is(td, th) code {
+  white-space: nowrap;
+}
+
+/* Spacing: buttons keep their padding in every variant, and the page actions sit clear of the title. */
+.sl-link-button {
+  padding: 0.7rem 1.4rem;
+  line-height: 1.2;
+}
+.sl-link-button.minimal {
+  padding-inline: 1.4rem;
+}
+
+/* Smaller type: the sidebar and headings were too large. */
+.sidebar-content {
+  gap: 0.75rem;
+}
+.sidebar-content details > summary,
+.sidebar-content .large {
+  font-size: var(--sl-text-sm);
+}
+.sidebar-content a {
+  font-size: var(--sl-text-sm);
+  padding: 0.35rem 0.75rem;
+  line-height: 1.4;
+}
+.sidebar-content ul {
+  gap: 0.1rem;
+}
+.sl-markdown-content h1,
+.content-panel h1 {
+  font-size: 1.875rem;
+  line-height: 1.2;
+}
+.sl-markdown-content h2 {
+  font-size: 1.375rem;
+}
+.sl-markdown-content h3 {
+  font-size: 1.125rem;
+}
+.sl-markdown-content h4 {
+  font-size: 1rem;
+}
+starlight-toc a,
+mobile-starlight-toc a {
+  font-size: var(--sl-text-xs);
+}
+[data-has-hero] .hero h1 {
+  font-size: clamp(2.25rem, 6vw, 3.25rem);
+}
+
+/* Table cells: even padding all round, including the first and last column that Starlight leaves flush. */
+.sl-markdown-content :is(th, td),
+.sl-markdown-content :is(th, td):first-child,
+.sl-markdown-content :is(th, td):last-child {
+  padding: 0.6rem 1rem;
+  font-size: var(--sl-text-sm);
+  line-height: 1.5;
+  vertical-align: top;
+}
+.sl-markdown-content thead th {
+  background: var(--secondary);
+}
+.sl-markdown-content tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+/* Tables always span the full column, with rounded corners drawn on the corner cells. */
+.sl-markdown-content table {
+  display: table;
+  width: 100%;
+  overflow: visible;
+}
+.sl-markdown-content thead tr:first-child th:first-child {
+  border-top-left-radius: calc(var(--radius) - 1px);
+}
+.sl-markdown-content thead tr:first-child th:last-child {
+  border-top-right-radius: calc(var(--radius) - 1px);
+}
+.sl-markdown-content tbody tr:last-child td:first-child {
+  border-bottom-left-radius: calc(var(--radius) - 1px);
+}
+.sl-markdown-content tbody tr:last-child td:last-child {
+  border-bottom-right-radius: calc(var(--radius) - 1px);
+}
+
+/* Previous / next links and the edit link: small and quiet. */
+.pagination-links {
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+.pagination-links > a {
+  padding: 0.6rem 0.9rem;
+  gap: 0.6rem;
+  border-color: var(--border);
+  border-radius: calc(var(--radius) - 2px);
+  box-shadow: none;
+}
+.pagination-links > a:hover {
+  border-color: var(--muted-foreground);
+}
+.pagination-links > a span {
+  font-size: var(--sl-text-xs);
+  color: var(--muted-foreground);
+}
+.pagination-links .link-title {
+  font-size: var(--sl-text-sm);
+  line-height: 1.3;
+  font-weight: 500;
+  color: var(--foreground);
+}
+.pagination-links svg {
+  width: 1rem;
+  height: 1rem;
+}
+footer .meta a,
+.meta a {
+  font-size: var(--sl-text-xs);
+  color: var(--muted-foreground);
+}
+
+/* Footer line: plain grey links, not the browser's blue and purple. */
+footer a,
+footer a:visited {
+  color: var(--muted-foreground);
+  text-decoration: none;
+}
+footer a:hover {
+  color: var(--foreground);
+  text-decoration: underline;
+}
+
+/* Code blocks: smaller text, no window-dots header on blocks without a title, a quiet copy button. */
+.expressive-code {
+  --ec-codeFontSize: 0.8125rem;
+  --ec-codeLineHt: 1.6;
+  --ec-codePadInl: 1rem;
+  --ec-codePadBlk: 0.75rem;
+  --ec-brdRad: calc(var(--radius) - 2px);
+  --ec-brdWd: 0px;
+  margin-block: 1rem;
+}
+.expressive-code .frame.is-terminal:not(.has-title) .header {
+  display: none;
+}
+.expressive-code .frame.is-terminal:not(.has-title) pre {
+  border-radius: inherit;
+}
+.expressive-code .frame {
+  box-shadow: none;
+}
+.expressive-code .copy {
+  inset-inline-end: 0.5rem;
+  top: 0.65rem;
+}
+.expressive-code .copy button {
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: calc(var(--radius) - 4px);
+  --ec-frm-inlBtnFg: var(--muted-foreground);
+  --ec-frm-inlBtnBg: transparent;
+  --ec-frm-inlBtnBgIdleOpa: 0;
+  --ec-frm-inlBtnBgHoverOrFocusOpa: 1;
+  --ec-frm-inlBtnBgActOpa: 1;
+  --ec-frm-inlBtnBrd: transparent;
+  border-color: transparent;
+  background: transparent;
+  opacity: 0.7;
+}
+.expressive-code .copy button::after {
+  inset: 0;
+  margin: auto;
+  width: 15px;
+  height: 15px;
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='14' height='14' x='8' y='8' rx='2'/%3E%3Cpath d='M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='14' height='14' x='8' y='8' rx='2'/%3E%3Cpath d='M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2'/%3E%3C/svg%3E");
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+}
+.expressive-code .copy button:hover,
+.expressive-code .frame:hover .copy button {
+  opacity: 1;
+}
+.expressive-code pre {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+/* Home page: everything a step smaller. */
+[data-has-hero] .hero {
+  padding-block: 2rem 1rem;
+}
+[data-has-hero] .hero h1 {
+  font-size: clamp(1.75rem, 4.5vw, 2.5rem);
+}
+[data-has-hero] .hero .tagline {
+  font-size: var(--sl-text-base);
+  max-width: 34rem;
+}
+.sl-link-button {
+  padding: 0.5rem 1.1rem;
+  font-size: var(--sl-text-sm);
+}
+.card {
+  padding: 1rem 1.1rem;
+  border-radius: calc(var(--radius) - 2px);
+}
+.card .title {
+  font-size: var(--sl-text-base);
+  gap: 0.6rem;
+}
+.card .icon {
+  font-size: var(--sl-text-base);
+  padding: 0.3rem;
+}
+.card .body {
+  font-size: var(--sl-text-sm);
+  line-height: 1.5;
+  margin-top: 0.5rem;
+}
+.card-grid {
+  gap: 0.75rem;
+}
+[data-has-hero] .sl-markdown-content h2 {
+  font-size: 1.25rem;
+}
+.sl-link-card {
+  padding: 0.6rem 0.9rem;
+}
+.sl-link-card .title {
+  font-size: var(--sl-text-sm);
+}
+.sl-link-card .description {
+  font-size: var(--sl-text-xs);
+}
+
+/* Table cells wrap at spaces, never letter by letter; only long addresses may break. */
+.sl-markdown-content :is(td, th) {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.sl-markdown-content :is(td, th) a {
+  overflow-wrap: anywhere;
+}
+.sl-markdown-content tbody td {
+  color: color-mix(in oklab, var(--foreground) 85%, var(--background));
+}
+.sl-markdown-content tbody td:first-child {
+  min-width: 7rem;
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+/* No underlines: links are told apart by colour and weight, with an underline only on hover. */
+.sl-markdown-content a:not(:where(.not-content *)),
+.pagination-links a,
+.pagination-links a *,
+footer a {
+  text-decoration: none !important;
+}
+.sl-markdown-content a:not(:where(.not-content *)) {
+  color: var(--foreground);
+  font-weight: 500;
+  border-bottom: 1px solid var(--border);
+}
+.sl-markdown-content a:not(:where(.not-content *)):hover {
+  border-bottom-color: var(--foreground);
+}
+.sl-markdown-content h1 a,
+.sl-markdown-content h2 a,
+.sl-markdown-content h3 a,
+.sl-markdown-content h4 a {
+  border-bottom: 0;
+}
+
+/* Diagrams: capped so they never fill the screen. */
+.mermaid-diagram {
+  padding: 0.75rem;
+}
+.mermaid-diagram svg {
+}
+
+/* Home page, a step smaller again. */
+[data-has-hero] .hero h1 {
+  font-size: clamp(1.5rem, 4vw, 2rem);
+}
+[data-has-hero] .hero .tagline {
+  font-size: var(--sl-text-sm);
+}
+[data-has-hero] .sl-markdown-content {
+  font-size: var(--sl-text-sm);
+}
+[data-has-hero] .card .title {
+  font-size: var(--sl-text-sm);
+}
+[data-has-hero] .card .body {
+  font-size: var(--sl-text-xs);
+}
+[data-has-hero] .card {
+  padding: 0.75rem 0.9rem;
+}
+
+/* Header: a step smaller. */
+:root {
+  --sl-nav-height: 3rem;
+  --sl-nav-pad-y: 0.4rem;
+}
+.site-title {
+  font-size: var(--sl-text-base);
+}
+site-search button {
+  height: 2rem;
+  font-size: var(--sl-text-xs);
+  padding-inline: 0.6rem;
+  min-width: 0;
+}
+site-search kbd {
+  font-size: 0.6875rem;
+}
+.header .social-icons a {
+  padding: 0.4rem;
+}
+.header .social-icons svg {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+/* Heading anchor icon: small, grey, no underline. Its size and the space kept for it must stay in step, or it overlaps the title. */
+.sl-markdown-content {
+  --sl-anchor-icon-size: 0.8em;
+  --sl-anchor-icon-space: 1.1em;
+}
+.sl-markdown-content .sl-anchor-link,
+.sl-markdown-content .sl-anchor-link:hover {
+  border-bottom: 0 !important;
+  color: var(--muted-foreground);
+  font-weight: 400;
+}
+
+/* The anchor icon sits after the title with a small gap, instead of over the end of it. */
+.sl-markdown-content .sl-heading-wrapper > :first-child:not([hidden]) {
+  padding-inline-end: 0;
+}
+.sl-markdown-content .sl-anchor-link {
+  margin-inline-start: 0.4em;
+}
+
+/* Page layout: less empty space around the title, no scrollbars on the side panels. */
+.sl-markdown-content .sl-heading-wrapper {
+  align-items: center;
+}
+.sl-markdown-content .sl-anchor-link {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+}
+.sl-markdown-content .sl-anchor-icon {
+  display: inline-flex;
+  align-items: center;
+}
+.sl-markdown-content .sl-anchor-icon > svg {
+  vertical-align: middle;
+  position: static;
+  transform: none;
+}
+.content-panel {
+  padding-block: 1rem;
+}
+sl-sidebar-pane,
+.sidebar-pane,
+.sidebar-content,
+.right-sidebar,
+.right-sidebar-panel {
+  scrollbar-width: none !important;
+}
+.sidebar-pane::-webkit-scrollbar,
+.sidebar-content::-webkit-scrollbar,
+.right-sidebar::-webkit-scrollbar,
+.right-sidebar-panel::-webkit-scrollbar {
+  display: none;
+}
+
+/* A smaller heading link icon. */
+.sl-markdown-content {
+  --sl-anchor-icon-size: 0.6em;
+}
+.sl-markdown-content .sl-anchor-icon > svg {
+  width: 0.6em;
+}
+
+/* Link cards: the whole card is the link. No line under the title, just a soft hover on the card. */
+.sl-markdown-content .sl-link-card a,
+.sl-markdown-content .sl-link-card a:hover {
+  border-bottom: 0 !important;
+  text-decoration: none !important;
+  font-weight: 500;
+  color: var(--foreground);
+}
+.sl-link-card {
+  transition:
+    background-color 0.15s,
+    border-color 0.15s;
+}
+.sl-link-card:hover {
+  background: var(--secondary);
+  border-color: var(--muted-foreground);
+}
+.sl-link-card a:focus-visible {
+  outline: none;
+}
+.sl-link-card:has(a:focus-visible) {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.sl-link-card .icon {
+  color: var(--muted-foreground);
+}
+.sl-link-card:hover .icon {
+  color: var(--foreground);
+}
+
+/* Notice above the pages of an older version (written by scripts/sync-docs.mjs). */
+.sl-banner {
+  background: var(--secondary);
+  color: var(--muted-foreground);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--sl-text-xs);
+  padding: 0.5rem 1rem;
+}
+.sl-banner strong {
+  color: var(--foreground);
+}
+.sl-banner a {
+  color: var(--foreground);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+/* The title area must not clip the version list that opens below the site name. */
+.title-wrapper {
+  overflow: visible;
+}
+
+/* Header: no divider line between the social icons and the theme buttons. */
+.social-icons::after {
+  display: none !important;
+}
+
+/* Search: a quiet card, a smaller input with a thin border, and plain grey results. */
+site-search dialog {
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 16px 48px color-mix(in oklab, black 45%, transparent);
+}
+site-search dialog::backdrop {
+  background: color-mix(in oklab, black 55%, transparent);
+}
+#starlight__search {
+  --pagefind-ui-scale: 0.8;
+  --pagefind-ui-primary: var(--foreground);
+  --pagefind-ui-text: var(--muted-foreground);
+  --pagefind-ui-background: var(--card);
+  --pagefind-ui-border: var(--border);
+  --pagefind-ui-tag: var(--secondary);
+  --pagefind-ui-border-radius: calc(var(--radius) - 2px);
+}
+#starlight__search input:focus {
+  --pagefind-ui-border: var(--muted-foreground);
+  outline: none;
+}
+#starlight__search .pagefind-ui__search-input {
+  font-size: 0.9375rem;
+  height: 2.75rem;
+  box-shadow: none;
+}
+#starlight__search .pagefind-ui__message {
+  font-size: var(--sl-text-xs);
+  font-weight: 400;
+  color: var(--muted-foreground);
+  padding: 0.5rem 0.25rem;
+}
+#starlight__search .pagefind-ui__result {
+  border-top-color: var(--border);
+}
+#starlight__search .pagefind-ui__result-link {
+  color: var(--foreground);
+  font-weight: 500;
+  font-size: var(--sl-text-sm);
+}
+#starlight__search .pagefind-ui__result-excerpt {
+  color: var(--muted-foreground);
+  font-size: var(--sl-text-xs);
+}
+#starlight__search mark {
+  background: var(--secondary);
+  color: var(--foreground);
+  border-radius: 2px;
+}
+#starlight__search .pagefind-ui__result-link:hover,
+#starlight__search .pagefind-ui__result:hover {
+  background: var(--secondary);
+}
+
+/* Search: the magnifier, the text and the clear button share one centre line. */
+#starlight__search .pagefind-ui__form::before {
+  top: calc((2.75rem - 14.4px) / 2);
+}
+#starlight__search .pagefind-ui__search-clear {
+  top: 0;
+  height: 2.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Light theme: the card colour is white like the page, so code blocks and asides get a light grey fill to stand out. */
+:root[data-theme='light'] .expressive-code {
+  --ec-codeBg: var(--secondary);
+  --ec-frm-edBg: var(--secondary);
+  --ec-frm-trmBg: var(--secondary);
+  --ec-frm-trmTtbBg: var(--muted);
+  --ec-frm-edTabBarBg: var(--muted);
+  --ec-frm-edActTabBg: var(--secondary);
+  --ec-brdWd: 0px;
+}
+:root[data-theme='light'] .starlight-aside,
+:root[data-theme='light'] .page-actions,
+:root[data-theme='light'] .sl-link-card {
+  background: var(--secondary);
+}
+
+/* No drop shadows anywhere: flat, with thin borders. */
+:root {
+  --sl-shadow-sm: none;
+  --sl-shadow-md: none;
+  --sl-shadow-lg: none;
+}
+.sl-menu-button {
+  box-shadow: none !important;
+  border: 1px solid var(--border);
+  background: var(--background);
+  color: var(--foreground);
+}
+.mobile-toc-menu,
+mobile-starlight-toc nav,
+mobile-starlight-toc .dropdown {
+  box-shadow: none !important;
+}
+
+/* The "On this page" bar on small screens: same grey borders as the rest. */
+mobile-starlight-toc nav {
+  background: var(--background);
+  border: 0;
+  border-bottom: 1px solid var(--border);
+}
+mobile-starlight-toc summary {
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--card);
+  color: var(--foreground);
+  font-size: var(--sl-text-xs);
+  padding: 0.35rem 0.7rem;
+}
+mobile-starlight-toc summary:focus-visible,
+mobile-starlight-toc[open] summary {
+  outline: none;
+  border-color: var(--muted-foreground);
+}
+mobile-starlight-toc .display-current {
+  font-size: var(--sl-text-xs);
+  color: var(--muted-foreground);
+  font-weight: 500;
+}
+mobile-starlight-toc .dropdown {
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--background);
+  border-radius: 0;
+}
+mobile-starlight-toc .dropdown a {
+  font-size: var(--sl-text-sm);
+  padding-block: 0.45rem;
+}
+
+/* Small screens: a smaller title, compact page actions, tighter spacing. */
+@media (max-width: 50rem) {
+  .sl-markdown-content h1,
+  .content-panel h1 {
+    font-size: 1.5rem;
+  }
+  .sl-markdown-content h2 {
+    font-size: 1.25rem;
+  }
+  .sl-markdown-content h3 {
+    font-size: 1.0625rem;
+  }
+  .title-row {
+    align-items: flex-start !important;
+    gap: 0.5rem !important;
+  }
+  .title-row > h1 {
+    margin: 0;
+  }
+  .pa-copy [data-label] {
+    display: none;
+  }
+  .pa-copy {
+    padding-inline: 0.5rem !important;
+  }
+  .content-panel {
+    padding-inline: 1rem;
+  }
+  .sl-markdown-content {
+    font-size: 0.9375rem;
+  }
+  .sl-markdown-content table {
+    font-size: var(--sl-text-xs);
+  }
+  .sl-markdown-content :is(td, th) {
+    padding: 0.5rem 0.65rem;
+  }
+  .pa-list {
+    min-width: min(14rem, calc(100vw - 2rem));
+  }
+}
+
+/* Small screens: the "On this page" bar floats as a rounded card instead of a full-width strip. */
+@media (max-width: 72rem) {
+  :root {
+    --sl-mobile-toc-height: 2.75rem;
+  }
+  mobile-starlight-toc nav {
+    top: calc(var(--sl-nav-height) + 0.4rem);
+    inset-inline: 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: color-mix(in oklab, var(--background) 92%, transparent);
+    backdrop-filter: blur(8px);
+    overflow: hidden;
+  }
+  mobile-starlight-toc summary,
+  mobile-starlight-toc[open] summary,
+  mobile-starlight-toc summary:focus-visible {
+    border: 0 !important;
+    background: transparent !important;
+    padding-inline: 0.6rem;
+  }
+  mobile-starlight-toc .dropdown {
+    border-bottom: 0;
+    border-top: 1px solid var(--border);
+    max-height: 60vh;
+  }
+}
+
+@media (max-width: 72rem) {
+  mobile-starlight-toc .toggle,
+  mobile-starlight-toc summary > * {
+    border-color: transparent !important;
+    background: transparent !important;
+  }
+}
+
+/* Compact floating contents bar, its text centred. */
+@media (max-width: 72rem) {
+  mobile-starlight-toc nav {
+    top: calc(var(--sl-nav-height) + 0.35rem);
+  }
+  mobile-starlight-toc summary {
+    height: 2.25rem !important;
+    padding: 0 0.75rem !important;
+    gap: 0.5rem;
+    align-items: center;
+  }
+  mobile-starlight-toc .toggle {
+    padding: 0 !important;
+    height: auto !important;
+    line-height: 1;
+    gap: 0.35rem;
+  }
+  mobile-starlight-toc .display-current {
+    line-height: 1;
+  }
+}
+.sl-menu-button {
+  border-radius: calc(var(--radius) - 2px);
+}
+
+/* Menu button: the bars and the close cross sit exactly in the middle. */
+.sl-menu-button {
+  box-sizing: border-box;
+  width: 2rem;
+  height: 2rem;
+  padding: 0 !important;
+  align-items: center;
+  justify-content: center;
+}
+.sl-menu-button svg {
+  width: 1rem;
+  height: 1rem;
+  flex: none;
+}
+
+/* Tablet widths: the sidebar is on screen, so the floating contents bar starts after it, not under it. */
+@media (min-width: 50rem) and (max-width: 72rem) {
+  mobile-starlight-toc nav {
+    inset-inline-start: calc(var(--sl-content-inline-start, 0px) + 0.75rem);
+  }
+}
+
+/* No sideways jump between pages: keep room for the page scrollbar even on short pages that do not need one. */
+html {
+  scrollbar-gutter: stable;
+}

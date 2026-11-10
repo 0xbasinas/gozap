@@ -51,7 +51,7 @@ anything touching main, preload, the window or IPC, also `pnpm build:unpack && p
 
 This is a **pnpm + Turborepo monorepo**. Apps are in `apps/`, shared code in `packages/`. Add UI that more than one app needs to `packages/ui` and export it from `src/index.ts`.
 
-```
+````
 apps/desktop/             The Electron app (its own package.json, electron-builder.yml, tests, scripts).
   src/main/               Electron main process (Node). index.ts is the entry.
   src/preload/            api.ts = everything the page may call (contextBridge). Sandboxed: import only `electron` + shared code.
@@ -61,15 +61,17 @@ apps/desktop/             The Electron app (its own package.json, electron-build
   tests/e2e/              Playwright against the packaged app.   tests/update/  old-to-new update test.
 apps/web/                 Vite + React SPA: marketing site (/), download page (/download, reads the latest GitHub release), web app (/app/*).
                           public/_headers sets the CSP and security headers (served by the Worker, see apps/api/wrangler.jsonc).
-apps/api/                 Hono API on Cloudflare Workers + D1 (Drizzle) + Better Auth magic links (Resend). Also serves apps/web/dist. See docs/api.md.
+apps/docs/                Astro Starlight docs site. Its pages are generated from the Markdown in docs/ (`pnpm --filter @repo/docs dev`, served at `/docs`; `pnpm build:site` builds web + docs together and copies the docs into `apps/web/dist/docs`; deploy builds need `fetch-depth: 0` so "Last updated" dates come from git); edit docs/, never src/content/docs/**. A ```mermaid code block in docs/ is drawn as a diagram (src/components/Mermaid.astro). Theme: src/styles/theme.css, which mirrors packages/ui/src/theme.css.
+apps/api/                 Hono API on Cloudflare Workers + D1 (Drizzle) + Better Auth magic links (Resend). Also serves apps/web/dist. See docs/api/overview.md.
 packages/shared/          zod schemas shared by API, web and desktop.
 packages/ui/               @repo/ui: shared React components (Button, cn) and the Tailwind theme (theme.css). Source-only; apps bundle it.
 turbo.json                Task graph (build, typecheck, test). pnpm-workspace.yaml holds the workspace globs and the version catalog.
 .github/                  Workflows. publish-stable / publish-beta call _publish.yml after ci.yml passes.
 scripts/                  template-update.mjs (+ template-update-lib.mjs, pure and tested): `pnpm template:update`. setup-cloud.mjs (+ setup-cloud-lib.mjs, pure and tested with `node --test`): one-command Cloudflare/Resend/GitHub setup.
-docs/                     template-updates.md (keeping an app in sync with the template), setup-cloud.md (that setup), api.md (API, database, sign-in), architecture.md (how the app works), releasing.md (releases, rollouts, rollbacks),
-                          monorepo-and-web.md (how the repo is organised and the plan for web + API).
-```
+docs/                     Source of the docs site, in folders: guides/ (setup-cloud, template-updates, versioning-the-docs), desktop/ (architecture, window-and-menus,
+                          app-features, security, account-sign-in), releasing/ (overview, rollouts, checks-and-security), api/ (overview, sign-in,
+                          accounts, operations), project/ (monorepo-and-web). Each file is one page; the sidebar order is in apps/docs/sidebar.json. Old versions of the docs live in docs-versions/<slug>/ (made with `pnpm --filter @repo/docs version:create <slug>`, listed in apps/docs/versions.json); see docs/guides/versioning-the-docs.md.
+````
 
 Monorepo rules: shared dependency versions live in the `catalog:` of `pnpm-workspace.yaml` (use `catalog:` in a package, not a
 version). Root scripts (`pnpm dev`, `pnpm build:unpack`, `pnpm test:e2e` ...) forward to `apps/desktop`. Lint, format and
@@ -80,7 +82,7 @@ only third-party runtime modules go in `dependencies` (electron-builder packages
 
 - **The renderer is untrusted.** Windows use `sandbox: true`, `contextIsolation: true`, `nodeIntegration: false`. Never
   loosen these, never expose `ipcRenderer` or Node APIs to the page.
-- **Adding an IPC call** (also in docs/architecture.md): add the channel and types to `apps/desktop/src/shared/ipc.ts`; handle it in
+- **Adding an IPC call** (also in docs/desktop/architecture.md): add the channel and types to `apps/desktop/src/shared/ipc.ts`; handle it in
   main with `handle()` from `apps/desktop/src/main/secureIpc.ts` (never raw `ipcMain.handle`) and validate every argument with a
   function in `apps/desktop/src/shared/validate.ts` (with a test); expose one narrow function in `apps/desktop/src/preload/api.ts`; call
   `window.api.thing()` from React.
@@ -104,7 +106,7 @@ only third-party runtime modules go in `dependencies` (electron-builder packages
   `pnpm cloud:doctor` only reads, so run it when something about sign-in or deploys looks wrong. Pull request previews
   (`.github/workflows/preview.yml`) set `PREVIEW=true`, and the Worker then takes its address from the request: do not read
   `BETTER_AUTH_URL` directly in new code, use the value on `env` that the app already receives.
-- Stay inside the free tiers (see docs/api.md): no password hashing, no work per request that reads many D1 rows, rate limit only
+- Stay inside the free tiers (see docs/api/overview.md): no password hashing, no work per request that reads many D1 rows, rate limit only
   sign-in, send email with `waitUntil`.
 - Desktop sign-in is main-process only (`apps/desktop/src/main/auth.ts`). Do not use `@better-auth/electron`'s `setupMain`, do not give the
   renderer tokens, and check deep links with `authLink.ts` before using them. The Account section shows only when `API_URL` is set at build time.
@@ -112,6 +114,8 @@ only third-party runtime modules go in `dependencies` (electron-builder packages
   `pnpm --filter @repo/api auth:schema`. Migrations run before the new code deploys, so keep them backward compatible.
 - Per-person data that must follow them between devices goes through `/api/preferences` (last write wins, local copy first, best-effort sync):
   see `packages/shared/src/preferences.ts` and the theme in `apps/web/src/lib/theme.ts` and `apps/desktop/src/main/preferencesSync.ts`.
+- Directory sync (SCIM) is our own code on `db.batch()` (docs/api/teams-and-sso.md), not Better Auth's plugin, which needs transactions D1 lacks. Never enable the adapter's `transaction` option.
+- AI apps (MCP) use Better Auth's `mcp()` plugin as the OAuth server plus CIMD client ids (docs/api/ai-apps.md). Never add `oauthProvider()` beside it, never turn on client registration, and keep `/api/mcp` tools read-only and scoped to the token's person.
 - Anything you store per person needs `ON DELETE CASCADE` on the user and a place in the account export (`apps/api/src/app.ts`).
 - `apps/web/public/.well-known/security.txt` must be renewed before its `Expires` date (it is valid for at most a year, RFC 9116); the list on `/sub-processors` is `SUBPROCESSORS` in `apps/web/src/config.ts`: edit both to match the accounts you really use.
 - Web and API deploy from `.github/workflows/deploy-web.yml` (off until `CLOUDFLARE_DEPLOY=true`); it never releases the desktop app.
@@ -122,7 +126,7 @@ Version is `<major.minor from package.json>.<git commit count>`; beta adds `-bet
 `_publish.yml` builds Windows/macOS/Linux, publishes to GitHub Releases at 10%, attests provenance, adds
 `SHA256SUMS.txt` and embeds release notes in the app. `rollout-guard.yml` (hourly) pauses a crashing release at 0% and
 otherwise promotes it 25% -> 50% -> 100% over three days. `rollback-release.yml` and `set-rollout.yml` are manual.
-Details: [docs/releasing.md](docs/releasing.md).
+Details: [docs/releasing/overview.md](docs/releasing/overview.md).
 
 ## Gotchas learned the hard way
 

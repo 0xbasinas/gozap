@@ -1,0 +1,8 @@
+---
+// Overrides Starlight's page content wrapper only to add the diagram script (see Mermaid.astro).
+import Default from '@astrojs/starlight/components/MarkdownContent.astro'
+import Mermaid from './Mermaid.astro'
+---
+
+<Default><slot /></Default>
+<Mermaid />

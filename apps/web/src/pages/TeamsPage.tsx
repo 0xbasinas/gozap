@@ -2,6 +2,8 @@ import { useEffect, useState, type FormEvent, type JSX } from 'react'
 import { Button } from '@repo/ui'
 import { Navigate } from 'react-router'
 import { authClient } from '../lib/auth'
+import { DirectorySyncSection } from '../components/DirectorySyncSection'
+import { SsoAdminSection } from '../components/SsoAdminSection'
 
 interface Team {
   id: string
@@ -192,6 +194,8 @@ export function TeamsPage(): JSX.Element {
               </Button>
             </form>
           )}
+          {manages && <SsoAdminSection organizationId={full.id} />}
+          {owns && <DirectorySyncSection organizationId={full.id} />}
           {owns ? (
             <Button
               variant="outline"

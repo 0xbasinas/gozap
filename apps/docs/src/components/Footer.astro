@@ -1,0 +1,16 @@
+---
+// Overrides Starlight's footer (https://starlight.astro.build/guides/overriding-components/): the usual edit link and
+// previous/next links, then the same quiet line the web app's footer has. Colours come from the shared theme.
+import Default from '@astrojs/starlight/components/Footer.astro'
+
+const REPO = 'https://github.com/0xbasinas/electron-desktop-template'
+const { siteTitle } = Astro.locals.starlightRoute
+---
+
+<Default><slot /></Default>
+<div class="mt-8 border-t border-border pt-6 text-center text-xs text-muted-foreground">
+  {siteTitle} ·
+  <a class="text-muted-foreground underline underline-offset-2 hover:text-foreground" href={`${REPO}/releases`}>Releases</a> ·
+  <a class="text-muted-foreground underline underline-offset-2 hover:text-foreground" href={`${REPO}/issues/new/choose`}>Feedback</a> ·
+  <a class="text-muted-foreground underline underline-offset-2 hover:text-foreground" href={`${REPO}/security`}>Security</a>
+</div>

@@ -10,7 +10,7 @@
 //
 // How it works: git can merge two trees that share a base, even in an unrelated repo, as long as it has all three
 // objects. So we fetch the template, take the diff between the commit we last synced (base) and its newest commit,
-// and apply it file by file with a 3-way merge against this app's own files. See docs/template-updates.md.
+// and apply it file by file with a 3-way merge against this app's own files. See docs/guides/template-updates.md.
 import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import {

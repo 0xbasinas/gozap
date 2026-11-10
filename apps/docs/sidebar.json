@@ -1,0 +1,39 @@
+[
+  {
+    "label": "Guides",
+    "pages": ["guides/setup-cloud", "guides/template-updates", "guides/versioning-the-docs"]
+  },
+  {
+    "label": "The desktop app",
+    "pages": [
+      "desktop/architecture",
+      "desktop/window-and-menus",
+      "desktop/app-features",
+      "desktop/security",
+      "desktop/account-sign-in"
+    ]
+  },
+  {
+    "label": "Releasing",
+    "pages": ["releasing/overview", "releasing/rollouts", "releasing/checks-and-security"],
+    "labels": {
+      "releasing/overview": "Overview"
+    }
+  },
+  {
+    "label": "Website and API",
+    "pages": [
+      "project/monorepo-and-web",
+      "api/overview",
+      "api/sign-in",
+      "api/accounts",
+      "api/staff-and-keys",
+      "api/teams-and-sso",
+      "api/ai-apps",
+      "api/operations"
+    ],
+    "labels": {
+      "api/overview": "API overview"
+    }
+  }
+]

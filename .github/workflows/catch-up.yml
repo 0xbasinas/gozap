@@ -1,7 +1,7 @@
 name: Catch up
 # GitHub starts no workflows for a merge made with GITHUB_TOKEN (the auto-merge job does that), so such a merge gets no
 # release, no deploy and no branch clean-up. Every 15 minutes this looks for that and does it by hand. It changes nothing
-# when everything is fine. See docs/releasing.md ("When a merge does not start a release").
+# when everything is fine. See docs/releasing/rollouts.md ("When a merge does not start a release").
 on:
   schedule:
     - cron: '*/15 * * * *'

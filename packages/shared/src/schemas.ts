@@ -31,6 +31,18 @@ export const securityEventSchema = z.object({
 export const securityEventsSchema = z.array(securityEventSchema)
 export type SecurityEvent = z.infer<typeof securityEventSchema>
 
+/** An AI app (OAuth client) as staff see it in the admin page. */
+export const aiAppsSchema = z.array(
+  z.object({
+    clientId: z.string(),
+    name: z.string().nullable(),
+    disabled: z.boolean(),
+    people: z.number(),
+    createdAt: z.string().nullable()
+  })
+)
+export type AiApp = z.infer<typeof aiAppsSchema>[number]
+
 /** Everything we hold about a person (the "download my data" file). No tokens or secrets are included. */
 export const accountExportSchema = z.object({
   exportedAt: z.string(),
@@ -48,6 +60,19 @@ export const accountExportSchema = z.object({
   securityActivity: z.array(securityEventSchema).default([]),
   teams: z
     .array(z.object({ name: z.string(), role: z.string(), joinedAt: z.string() }))
+    .default([]),
+  directory: z
+    .array(
+      z.object({
+        team: z.string(),
+        userName: z.string(),
+        externalId: z.string().nullable(),
+        active: z.boolean()
+      })
+    )
+    .default([]),
+  connectedApps: z
+    .array(z.object({ clientId: z.string(), scopes: z.array(z.string()), createdAt: z.string() }))
     .default([]),
   apiKeys: z
     .array(

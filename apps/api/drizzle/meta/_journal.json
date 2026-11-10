@@ -134,6 +134,41 @@
       "when": 1794162946555,
       "tag": "0018_clean_black_knight",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1794164492326,
+      "tag": "0019_striped_hulk",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1794165939645,
+      "tag": "0020_greedy_johnny_blaze",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1794167571933,
+      "tag": "0021_careless_vector",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1794167700294,
+      "tag": "0022_military_shotgun",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1794167790697,
+      "tag": "0023_worthless_lily_hollister",
+      "breakpoints": true
     }
   ]
 }

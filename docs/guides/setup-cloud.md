@@ -43,7 +43,7 @@ passed as `RESEND_SETUP_KEY` in the environment. The Worker gets a different key
    An existing `BETTER_AUTH_SECRET` is kept, because changing it signs everybody out (`--rotate-secret` does it on purpose).
 7. **Deploy.** Builds the site, applies the D1 migrations to the remote database, then deploys the Worker.
    In the same step it adds a starter DMARC record, creates the Resend webhook for bounces and complaints, and (if `SENTRY_DSN`
-   is in the environment) stores the Sentry DSN. See "Email deliverability" and "Error reporting" in [api.md](api.md).
+   is in the environment) stores the Sentry DSN. See "Email deliverability" and "Error reporting" in [the API guide](../api/operations.md).
 8. **GitHub.** Sets the repository variable `API_URL` (so release builds of the desktop app know where to sign in) and,
    when `CLOUDFLARE_API_TOKEN` is set, the secrets and variable that switch on automatic deploys, per-pull-request previews and
    the daily database backup. It also creates `BACKUP_PASSPHRASE` (the key that encrypts the backups) and **shows it once**:
@@ -101,7 +101,7 @@ that breaks sign-in is wrong; warnings (for example "no DMARC record yet") do no
 ## Previews and backups
 
 With deploys on, every pull request that touches the website or API gets its own live copy, and the production database is
-exported, restore-tested and encrypted every day. Both are explained in [api.md](api.md) ("Previews" and "Backups").
+exported, restore-tested and encrypted every day. Both are explained in [the API guide](../api/operations.md) ("Previews" and "Backups").
 
 ## Troubleshooting
 

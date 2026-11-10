@@ -37,7 +37,7 @@ A merge that changes the app (`apps/desktop/src/`, `apps/desktop/build/`, `apps/
 release (`<major>.<minor>.<commit count>`), first to 10% of users and then more as it proves healthy. So only merge
 changes that are ready to ship. Docs, tests, scripts and CI changes don't release.
 
-Changes under `apps/web`, `apps/api` and `packages/` deploy the website and API (after setup, see [docs/setup-cloud.md](docs/setup-cloud.md));
+Changes under `apps/web`, `apps/api` and `packages/` deploy the website and API (after setup, see [docs/guides/setup-cloud.md](docs/guides/setup-cloud.md));
 packages are also bundled into the desktop app, so a change there can publish a desktop release too.
 
 Using an AI coding agent? Point it at [AGENTS.md](AGENTS.md).

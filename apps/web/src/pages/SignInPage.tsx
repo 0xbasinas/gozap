@@ -12,13 +12,28 @@ type State = 'idle' | 'sending' | 'sent'
 const passkeysSupported = (): boolean =>
   typeof window !== 'undefined' && 'PublicKeyCredential' in window
 
+/** The request an AI app started, without the signature (the authorize step signs it again), or null. */
+function oauthContinuation(params: URLSearchParams): string | null {
+  if (!params.get('client_id') || !params.get('sig')) return null
+  const copy = new URLSearchParams(params)
+  for (const key of ['sig', 'exp', 'next', 'error', 'team']) copy.delete(key)
+  return copy.toString()
+}
+
 export function SignInPage(): JSX.Element {
   const { data: session } = authClient.useSession()
   const [params] = useSearchParams()
   const desktop = readDesktopParams(params)
   // Where to go after signing in: a path on this site only (an invitation page, for example).
   const wanted = params.get('next') ?? ''
-  const next = /^\/(?![/\\])/.test(wanted) ? wanted : '/app'
+  // An AI app asked for a sign-in (the address carries the app's signed request): after signing in, go back to the
+  // authorize step, which then shows the consent page.
+  const oauthQuery = oauthContinuation(params)
+  const next = oauthQuery
+    ? `/api/auth/oauth2/authorize?${oauthQuery}`
+    : /^\/(?![/\\])/.test(wanted)
+      ? wanted
+      : '/app'
   const [email, setEmail] = useState('')
   const [state, setState] = useState<State>('idle')
   // Turnstile: the key comes from the API; with none, no challenge is asked for.
@@ -38,6 +53,11 @@ export function SignInPage(): JSX.Element {
         ? 'That sign-in link did not work. It may have expired or been used already.'
         : null
   )
+
+  // Signed in and an AI app is waiting: carry on to the authorize step (a full page load, since the server answers).
+  useEffect(() => {
+    if (session && oauthQuery) window.location.replace(next)
+  }, [session, oauthQuery, next])
 
   // Already signed in on the web and the desktop app asked for a sign-in: hand the session over.
   const signedIn = Boolean(session)
@@ -60,6 +80,13 @@ export function SignInPage(): JSX.Element {
       </p>
     )
   }
+  if (session && oauthQuery) {
+    return (
+      <p className="text-center text-muted-foreground" role="status">
+        Continuing...
+      </p>
+    )
+  }
   if (session) return <Navigate to={next} replace />
 
   async function signInWithPasskey(): Promise<void> {
@@ -71,16 +98,24 @@ export function SignInPage(): JSX.Element {
   }
 
   async function signInWithCompany(): Promise<void> {
+    // A team's own sign-in link (/sign-in?team=acme) needs no email: the team picks the provider.
+    const team = params.get('team')
     const parsed = emailSchema.safeParse(email)
-    if (!parsed.success) {
+    if (!team && !parsed.success) {
       setError('Enter your work email address first.')
       return
     }
     setError(null)
-    const { error: failure } = await authClient.signIn.sso({
-      email: parsed.data,
-      callbackURL: desktop ? '/auth/desktop' : next
-    })
+    const callbackURL = desktop ? '/auth/desktop' : next
+    const { error: failure } = await authClient.signIn.sso(
+      team
+        ? {
+            organizationSlug: team,
+            callbackURL,
+            ...(parsed.success ? { loginHint: parsed.data } : {})
+          }
+        : { email: parsed.data!, callbackURL, loginHint: parsed.data! }
+    )
     if (failure) setError('Your company has not set up single sign-on here. Use the email link.')
   }
 

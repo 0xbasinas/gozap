@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent, type JSX } from 'react'
 import { Button } from '@repo/ui'
 import { securityEventsSchema, type SecurityEvent } from '@repo/shared'
 import { Navigate } from 'react-router'
+import { AiAppsAdminSection } from '../components/AiAppsAdminSection'
 import { SsoAdminSection } from '../components/SsoAdminSection'
 import { authClient } from '../lib/auth'
 
@@ -211,6 +212,7 @@ export function AdminPage(): JSX.Element {
         </Button>
       </div>
       {role === 'admin' && <SsoAdminSection />}
+      {role === 'admin' && <AiAppsAdminSection />}
     </div>
   )
 }

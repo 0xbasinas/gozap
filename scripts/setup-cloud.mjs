@@ -2,7 +2,7 @@
 // One-command setup for the website and API on Cloudflare (+ Resend for email, + GitHub for automatic deploys).
 // Usage: pnpm setup:cloud [--url https://app.example.com] [--email-domain example.com] [--from-name "My App"]
 //                         [--skip-resend] [--skip-github] [--skip-deploy] [--rotate-secret] [--yes]
-// It is safe to run again: every step looks at what already exists first. See docs/setup-cloud.md.
+// It is safe to run again: every step looks at what already exists first. See docs/guides/setup-cloud.md.
 import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -201,7 +201,9 @@ if (previewDatabaseId) {
 } else if (
   !(await confirm('Create a staging database for pull request previews? (not production data)'))
 ) {
-  note('Skipped. Previews stay off until you create it (docs/api.md, Previews) or run this again.')
+  note(
+    'Skipped. Previews stay off until you create it (docs/api/operations.md, Previews) or run this again.'
+  )
 } else {
   wrangler(['d1', 'create', previewDbName])
   previewDatabaseId = d1Id(previewDbName)
@@ -428,7 +430,7 @@ if (workerResendKey && !have.has('RESEND_API_KEY')) {
   note('RESEND_API_KEY is already set.')
 }
 
-// Bounces and spam complaints: Resend calls the Worker, which stops emailing those addresses (docs/api.md).
+// Bounces and spam complaints: Resend calls the Worker, which stops emailing those addresses (docs/api/operations.md).
 if (workerResendKey && !have.has('RESEND_WEBHOOK_SECRET')) {
   if (!workerResendKey.endpoint) {
     note(
@@ -474,7 +476,7 @@ if (process.env.SENTRY_DSN && (!have.has('SENTRY_DSN') || args.flags.has('rotate
   note('SENTRY_DSN is already set.')
 } else {
   note(
-    'No SENTRY_DSN: errors are only in the Cloudflare logs. Set it and run again to turn on Sentry (docs/setup-cloud.md).'
+    'No SENTRY_DSN: errors are only in the Cloudflare logs. Set it and run again to turn on Sentry (docs/guides/setup-cloud.md).'
   )
 }
 
@@ -553,7 +555,7 @@ if (args.flags.has('skip-github')) {
         say('')
         say('    ┌─ SAVE THIS NOW in your password manager. It is shown only once. ─┐')
         say(`    │ BACKUP_PASSPHRASE = ${passphrase}`)
-        say('    └─ Without it the backups cannot be opened (docs/api.md, Backups) ─┘')
+        say('    └─ Without it the backups cannot be opened (docs/api/operations.md, Backups) ─┘')
         say('')
       } else {
         note('BACKUP_PASSPHRASE is already set.')

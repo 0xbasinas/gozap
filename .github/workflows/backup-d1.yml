@@ -35,7 +35,7 @@ jobs:
           BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
         run: |
           if [ -z "$BACKUP_PASSPHRASE" ]; then
-            echo "::error::The secret BACKUP_PASSPHRASE is missing. The file would be readable by anyone on a public repository, so nothing is exported. See docs/api.md (Backups)."
+            echo "::error::The secret BACKUP_PASSPHRASE is missing. The file would be readable by anyone on a public repository, so nothing is exported. See docs/api/operations.md (Backups)."
             exit 1
           fi
           pnpm --filter @repo/api exec wrangler d1 export DB --remote --output "$RUNNER_TEMP/backup.sql"

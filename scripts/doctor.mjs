@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // `pnpm doctor`: checks the whole cloud setup (config, Cloudflare login, secrets, DNS for email, GitHub variables,
 // the deployed site) and says what is wrong and how to fix it. It only reads: nothing is created or changed, and
-// secret values are never shown (only their names). See docs/setup-cloud.md.
+// secret values are never shown (only their names). See docs/guides/setup-cloud.md.
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { resolveTxt } from 'node:dns/promises'

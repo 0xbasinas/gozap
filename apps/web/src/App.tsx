@@ -1,23 +1,49 @@
-import type { JSX } from 'react'
+import { lazy, type JSX } from 'react'
 import { Route, Routes } from 'react-router'
 import { Layout } from './components/Layout'
-import { AccountPage } from './pages/AccountPage'
-import { AcceptInvitationPage } from './pages/AcceptInvitationPage'
-import { AdminPage } from './pages/AdminPage'
-import { TeamsPage } from './pages/TeamsPage'
-import { AppPage } from './pages/AppPage'
-import { CancelDeletionPage } from './pages/CancelDeletionPage'
-import { ConfirmEmailPage } from './pages/ConfirmEmailPage'
-import { DesktopCallbackPage } from './pages/DesktopCallbackPage'
-import { DownloadPage } from './pages/DownloadPage'
-import { FeedbackPage } from './pages/FeedbackPage'
 import { HomePage } from './pages/HomePage'
 import { NotFoundPage } from './pages/NotFoundPage'
-import { PrivacyPage } from './pages/PrivacyPage'
-import { ReleasesPage } from './pages/ReleasesPage'
-import { StatusPage } from './pages/StatusPage'
-import { SubprocessorsPage } from './pages/SubprocessorsPage'
 import { SignInPage } from './pages/SignInPage'
+import { TeamSignInPage } from './pages/TeamSignInPage'
+
+const AccountPage = lazy(() =>
+  import('./pages/AccountPage').then((m) => ({ default: m.AccountPage }))
+)
+const AcceptInvitationPage = lazy(() =>
+  import('./pages/AcceptInvitationPage').then((m) => ({ default: m.AcceptInvitationPage }))
+)
+const AdminPage = lazy(() => import('./pages/AdminPage').then((m) => ({ default: m.AdminPage })))
+const TeamsPage = lazy(() => import('./pages/TeamsPage').then((m) => ({ default: m.TeamsPage })))
+const AppPage = lazy(() => import('./pages/AppPage').then((m) => ({ default: m.AppPage })))
+const CancelDeletionPage = lazy(() =>
+  import('./pages/CancelDeletionPage').then((m) => ({ default: m.CancelDeletionPage }))
+)
+const ConfirmEmailPage = lazy(() =>
+  import('./pages/ConfirmEmailPage').then((m) => ({ default: m.ConfirmEmailPage }))
+)
+const DesktopCallbackPage = lazy(() =>
+  import('./pages/DesktopCallbackPage').then((m) => ({ default: m.DesktopCallbackPage }))
+)
+const DownloadPage = lazy(() =>
+  import('./pages/DownloadPage').then((m) => ({ default: m.DownloadPage }))
+)
+const FeedbackPage = lazy(() =>
+  import('./pages/FeedbackPage').then((m) => ({ default: m.FeedbackPage }))
+)
+const PrivacyPage = lazy(() =>
+  import('./pages/PrivacyPage').then((m) => ({ default: m.PrivacyPage }))
+)
+const ReleasesPage = lazy(() =>
+  import('./pages/ReleasesPage').then((m) => ({ default: m.ReleasesPage }))
+)
+const StatusPage = lazy(() => import('./pages/StatusPage').then((m) => ({ default: m.StatusPage })))
+const SubprocessorsPage = lazy(() =>
+  import('./pages/SubprocessorsPage').then((m) => ({ default: m.SubprocessorsPage }))
+)
+const ConsentPage = lazy(() =>
+  import('./pages/ConsentPage').then((m) => ({ default: m.ConsentPage }))
+)
+const DevicePage = lazy(() => import('./pages/DevicePage').then((m) => ({ default: m.DevicePage })))
 
 export function App(): JSX.Element {
   return (
@@ -30,6 +56,9 @@ export function App(): JSX.Element {
         <Route path="feedback" element={<FeedbackPage />} />
         <Route path="sub-processors" element={<SubprocessorsPage />} />
         <Route path="sign-in" element={<SignInPage />} />
+        <Route path="t/:slug/sign-in" element={<TeamSignInPage />} />
+        <Route path="consent" element={<ConsentPage />} />
+        <Route path="device" element={<DevicePage />} />
         <Route path="admin" element={<AdminPage />} />
         <Route path="teams" element={<TeamsPage />} />
         <Route path="accept-invitation/:id" element={<AcceptInvitationPage />} />

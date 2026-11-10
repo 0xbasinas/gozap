@@ -8,6 +8,10 @@ on:
     paths:
       - 'apps/web/**'
       - 'apps/api/**'
+      - 'apps/docs/**'
+      - 'docs/**'
+      - 'docs-versions/**'
+      - 'scripts/assemble-site.mjs'
       - 'packages/**'
       - 'pnpm-lock.yaml'
       - '.github/workflows/preview.yml'
@@ -40,6 +44,10 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The docs show a "Last updated" date for each page, taken from git history. A shallow clone would give
+          # every page the date of the checkout, so fetch it all.
+          fetch-depth: 0
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -49,11 +57,11 @@ jobs:
       - name: Check that the preview database is set up
         run: |
           if grep -q '00000000-0000-0000-0000-000000000001' apps/api/wrangler.preview-migrations.jsonc; then
-            echo "::error::The preview database is not set up. Run pnpm setup:cloud, or create it and put its id in apps/api/wrangler.jsonc (previews) and wrangler.preview-migrations.jsonc. See docs/api.md (Previews)."
+            echo "::error::The preview database is not set up. Run pnpm setup:cloud, or create it and put its id in apps/api/wrangler.jsonc (previews) and wrangler.preview-migrations.jsonc. See docs/api/operations.md (Previews)."
             exit 1
           fi
-      # Build the site first: the Worker serves apps/web/dist next to /api.
-      - run: pnpm exec turbo run build --filter=@repo/web
+      # Build the website and the docs first: the Worker serves apps/web/dist (with the docs at /docs) next to /api.
+      - run: pnpm build:site
       - name: Apply database migrations to the preview database
         run: pnpm --filter @repo/api exec wrangler d1 migrations apply DB --remote --config wrangler.preview-migrations.jsonc
       - name: Create or update the preview
@@ -65,7 +73,7 @@ jobs:
           sed -n '/^{/,$p' "$RUNNER_TEMP/preview.out" > "$RUNNER_TEMP/preview.json"
           url=$(jq -r '.preview.urls[0] // empty' "$RUNNER_TEMP/preview.json")
           if [ -z "$url" ]; then
-            echo "::error::Cloudflare created the preview but gave it no address. Previews need a workers.dev subdomain on the account (Cloudflare dashboard > Workers & Pages > Account details), then re-run this job. See docs/api.md (Previews)."
+            echo "::error::Cloudflare created the preview but gave it no address. Previews need a workers.dev subdomain on the account (Cloudflare dashboard > Workers & Pages > Account details), then re-run this job. See docs/api/operations.md (Previews)."
             exit 1
           fi
           echo "url=$url" >> "$GITHUB_OUTPUT"
