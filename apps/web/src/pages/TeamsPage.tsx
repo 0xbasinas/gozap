@@ -1,29 +1,12 @@
 import { useEffect, useState, type FormEvent, type JSX } from 'react'
-import { Button } from '@repo/ui'
-import { Navigate } from 'react-router'
+import { Button, buttonVariants } from '@repo/ui'
+import { Link, Navigate, useNavigate } from 'react-router'
 import { authClient } from '../lib/auth'
-import { DirectorySyncSection } from '../components/DirectorySyncSection'
-import { SsoAdminSection } from '../components/SsoAdminSection'
 
 interface Team {
   id: string
   name: string
-}
-interface Member {
-  id: string
-  userId: string
-  role: string
-  user: { email: string; name: string }
-}
-interface Invite {
-  id: string
-  email: string
-  role: string
-  status: string
-}
-interface Full extends Team {
-  members: Member[]
-  invitations: Invite[]
+  slug: string
 }
 
 const slugFor = (name: string): string =>
@@ -33,15 +16,15 @@ const slugFor = (name: string): string =>
     .replace(/^-|-$/g, '')
     .slice(0, 30)}-${crypto.randomUUID().slice(0, 6)}`
 
-/** Teams: people who share a workspace. Owners and admins invite by email; anyone but the owner can leave. */
+/** Your teams. A team is a workspace: pick one as active, or open it to see its people and settings. */
 export function TeamsPage(): JSX.Element {
   const { data: session, isPending } = authClient.useSession()
   const me = session?.user.id
+  const activeId = (session?.session as { activeOrganizationId?: string | null } | undefined)
+    ?.activeOrganizationId
+  const navigate = useNavigate()
   const [teams, setTeams] = useState<Team[] | null>(null)
-  const [open, setOpen] = useState<string | null>(null)
-  const [full, setFull] = useState<Full | null>(null)
   const [name, setName] = useState('')
-  const [email, setEmail] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [reload, setReload] = useState(0)
 
@@ -56,50 +39,25 @@ export function TeamsPage(): JSX.Element {
     }
   }, [me, reload])
 
-  useEffect(() => {
-    if (!open) return
-    let cancelled = false
-    void authClient.organization
-      .getFullOrganization({ query: { organizationId: open } })
-      .then(({ data }) => {
-        if (!cancelled) setFull((data as Full | null) ?? null)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [open, reload])
-
   if (isPending) return <p role="status">Loading...</p>
   if (!session) return <Navigate to="/sign-in" replace />
 
-  const mine = full?.members.find((m) => m.userId === me)?.role ?? ''
-  const manages = mine.includes('owner') || mine.includes('admin')
-  const owns = mine.includes('owner')
-
-  async function run(action: Promise<{ error: { message?: string } | null }>): Promise<void> {
+  async function run(action: Promise<{ error: { message?: string } | null }>): Promise<boolean> {
     const { error: failure } = await action
     setError(failure ? (failure.message ?? 'That did not work.') : null)
     setReload((n) => n + 1)
+    return !failure
   }
 
   async function create(event: FormEvent): Promise<void> {
     event.preventDefault()
-    if (!name.trim()) return
-    await run(authClient.organization.create({ name: name.trim(), slug: slugFor(name) }))
+    const title = name.trim()
+    if (!title) return
+    const slug = slugFor(title)
+    const ok = await run(authClient.organization.create({ name: title, slug }))
     setName('')
-  }
-
-  async function invite(event: FormEvent): Promise<void> {
-    event.preventDefault()
-    if (!full || !email.trim()) return
-    await run(
-      authClient.organization.inviteMember({
-        email: email.trim(),
-        role: 'member',
-        organizationId: full.id
-      })
-    )
-    setEmail('')
+    // A new team becomes the active workspace; take the person to it.
+    if (ok) void navigate(`/teams/${slug}`)
   }
 
   return (
@@ -126,101 +84,38 @@ export function TeamsPage(): JSX.Element {
       <ul className="divide-y divide-border rounded-lg border border-border">
         {teams?.map((t) => (
           <li key={t.id} className="flex items-center justify-between p-3 text-sm">
-            <span>{t.name}</span>
-            <Button variant="outline" size="sm" onClick={() => setOpen(t.id)}>
-              Open
-            </Button>
+            <span>
+              {t.name}
+              {activeId === t.id && (
+                <span className="ml-2 rounded-full bg-muted px-2 py-0.5 text-xs">
+                  Active workspace
+                </span>
+              )}
+            </span>
+            <span className="flex gap-2">
+              {activeId !== t.id && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  aria-label={`Use ${t.name} as workspace`}
+                  onClick={() =>
+                    void run(authClient.organization.setActive({ organizationId: t.id }))
+                  }
+                >
+                  Use
+                </Button>
+              )}
+              <Link
+                to={`/teams/${t.slug}`}
+                aria-label={`Open ${t.name}`}
+                className={buttonVariants({ variant: 'outline', size: 'sm' })}
+              >
+                Open
+              </Link>
+            </span>
           </li>
         ))}
       </ul>
-      {full && open === full.id && (
-        <section className="space-y-3" aria-label={`Team ${full.name}`}>
-          <h2 className="text-lg font-semibold">{full.name}</h2>
-          <ul className="divide-y divide-border rounded-lg border border-border">
-            {full.members.map((m) => (
-              <li key={m.id} className="flex items-center justify-between p-3 text-sm">
-                <span>
-                  {m.user.email} <span className="text-muted-foreground">({m.role})</span>
-                </span>
-                {manages && m.userId !== me && !m.role.includes('owner') && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      void run(
-                        authClient.organization.removeMember({
-                          memberIdOrEmail: m.id,
-                          organizationId: full.id
-                        })
-                      )
-                    }
-                  >
-                    Remove
-                  </Button>
-                )}
-              </li>
-            ))}
-          </ul>
-          {full.invitations
-            .filter((i) => i.status === 'pending')
-            .map((i) => (
-              <p key={i.id} className="flex items-center justify-between text-sm">
-                <span>Invited: {i.email}</span>
-                {manages && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      void run(authClient.organization.cancelInvitation({ invitationId: i.id }))
-                    }
-                  >
-                    Cancel invite
-                  </Button>
-                )}
-              </p>
-            ))}
-          {manages && (
-            <form onSubmit={(e) => void invite(e)} className="flex gap-2">
-              <input
-                aria-label="Email to invite"
-                type="email"
-                placeholder="Email to invite"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="h-9 w-full max-w-xs rounded-md border border-input bg-background px-3 text-sm"
-              />
-              <Button type="submit" variant="outline">
-                Send invitation
-              </Button>
-            </form>
-          )}
-          {manages && <SsoAdminSection organizationId={full.id} />}
-          {owns && <DirectorySyncSection organizationId={full.id} />}
-          {owns ? (
-            <Button
-              variant="outline"
-              onClick={() => {
-                void run(authClient.organization.delete({ organizationId: full.id }))
-                setOpen(null)
-                setFull(null)
-              }}
-            >
-              Delete team
-            </Button>
-          ) : (
-            <Button
-              variant="outline"
-              onClick={() => {
-                void run(authClient.organization.leave({ organizationId: full.id }))
-                setOpen(null)
-                setFull(null)
-              }}
-            >
-              Leave team
-            </Button>
-          )}
-        </section>
-      )}
     </div>
   )
 }

@@ -1704,6 +1704,204 @@ describe('teams (organization plugin)', () => {
   })
 })
 
+describe('workspace', () => {
+  const json = { 'content-type': 'application/json' }
+  const org = (s: ReturnType<typeof setup>, cookie: string, path: string, body: unknown) =>
+    s.call(`/api/auth/organization/${path}`, {
+      method: 'POST',
+      headers: { cookie, ...json },
+      body: JSON.stringify(body)
+    })
+  const current = async (s: ReturnType<typeof setup>, cookie: string) =>
+    (await (await s.call('/api/workspace', { headers: { cookie } })).json()) as {
+      teamId: string | null
+      teamName: string | null
+      role: string
+    }
+
+  it('needs a session', async () => {
+    const s = setup()
+    expect((await s.call('/api/workspace')).status).toBe(401)
+  })
+
+  it('is Personal until a team is active, then names the team and the role', async () => {
+    const s = setup()
+    const cookie = await signIn(s, 'ws-owner@example.com')
+    expect(await current(s, cookie)).toEqual({ teamId: null, teamName: null, role: '' })
+    const made = await org(s, cookie, 'create', { name: 'Acme', slug: 'acme-ws' })
+    const team = (await made.json()) as { id: string }
+    expect(await current(s, cookie)).toEqual({ teamId: team.id, teamName: 'Acme', role: 'owner' })
+  })
+
+  it('ignores an active team the person is no longer a member of', async () => {
+    const s = setup()
+    const owner = await signIn(s, 'ws-own2@example.com')
+    const team = (await (
+      await org(s, owner, 'create', { name: 'Gone', slug: 'gone-ws' })
+    ).json()) as {
+      id: string
+    }
+    const outsider = await signIn(s, 'ws-out@example.com')
+    // A removed member's session still points at the team: nothing clears it.
+    await bindings.DB.prepare(
+      "UPDATE session SET active_organization_id = ? WHERE user_id = (SELECT id FROM user WHERE email = 'ws-out@example.com')"
+    )
+      .bind(team.id)
+      .run()
+    expect(await current(s, outsider)).toEqual({ teamId: null, teamName: null, role: '' })
+  })
+})
+
+describe('workspace to-do list', () => {
+  const json = { 'content-type': 'application/json' }
+  const org = (s: ReturnType<typeof setup>, cookie: string, path: string, body: unknown) =>
+    s.call(`/api/auth/organization/${path}`, {
+      method: 'POST',
+      headers: { cookie, ...json },
+      body: JSON.stringify(body)
+    })
+  const add = (s: ReturnType<typeof setup>, cookie: string, title: string) =>
+    s.call('/api/todos', {
+      method: 'POST',
+      headers: { cookie, ...json },
+      body: JSON.stringify({ title })
+    })
+  const list = async (s: ReturnType<typeof setup>, cookie: string) =>
+    (await (await s.call('/api/todos', { headers: { cookie } })).json()) as {
+      workspace: { teamId: string | null }
+      todos: { id: string; title: string; done: boolean; mine: boolean; canRemove: boolean }[]
+    }
+  const setWorkspace = (email: string, teamId: string | null) =>
+    bindings.DB.prepare(
+      'UPDATE session SET active_organization_id = ? WHERE user_id = (SELECT id FROM user WHERE email = ?)'
+    )
+      .bind(teamId, email)
+      .run()
+
+  it('needs a session', async () => {
+    const s = setup()
+    expect((await s.call('/api/todos')).status).toBe(401)
+  })
+
+  it('keeps Personal items private and team items inside the team', async () => {
+    const s = setup()
+    const owner = await signIn(s, 'todo-owner@example.com')
+    expect((await add(s, owner, 'my own thing')).status).toBe(201)
+    const team = (await (
+      await org(s, owner, 'create', { name: 'Acme', slug: 'acme-todo' })
+    ).json()) as {
+      id: string
+    }
+    // Creating a team makes it the active workspace, so the Personal item is not in the list.
+    expect((await list(s, owner)).workspace.teamId).toBe(team.id)
+    expect((await list(s, owner)).todos).toHaveLength(0)
+    await add(s, owner, 'for the team')
+
+    const before = s.sent.length
+    await org(s, owner, 'invite-member', {
+      email: 'todo-mate@example.com',
+      role: 'member',
+      organizationId: team.id
+    })
+    const id = /accept-invitation\/([\w-]+)/.exec(s.sent[before]!.text)![1]!
+    const mate = await signIn(s, 'todo-mate@example.com')
+    await org(s, mate, 'accept-invitation', { invitationId: id })
+    await setWorkspace('todo-mate@example.com', team.id)
+    const seen = await list(s, mate)
+    expect(seen.todos.map((t) => t.title)).toEqual(['for the team'])
+    expect(seen.todos[0]).toMatchObject({ mine: false, canRemove: false })
+
+    // Any member can tick an item, but only its author or a team admin can remove it.
+    const tick = await s.call(`/api/todos/${seen.todos[0]!.id}`, {
+      method: 'PATCH',
+      headers: { cookie: mate, ...json },
+      body: JSON.stringify({ done: true })
+    })
+    expect(tick.status).toBe(204)
+    expect((await list(s, owner)).todos[0]!.done).toBe(true)
+    const denied = await s.call(`/api/todos/${seen.todos[0]!.id}`, {
+      method: 'DELETE',
+      headers: { cookie: mate }
+    })
+    expect(denied.status).toBe(403)
+
+    // Back in Personal the mate sees nothing of the team's list.
+    await setWorkspace('todo-mate@example.com', null)
+    expect((await list(s, mate)).todos).toHaveLength(0)
+
+    // The owner can remove a member's item.
+    await setWorkspace('todo-mate@example.com', team.id)
+    await add(s, mate, 'from the mate')
+    const theirs = (await list(s, owner)).todos.find((t) => t.title === 'from the mate')!
+    expect(theirs.canRemove).toBe(true)
+    const removed = await s.call(`/api/todos/${theirs.id}`, {
+      method: 'DELETE',
+      headers: { cookie: owner }
+    })
+    expect(removed.status).toBe(204)
+  })
+
+  it('shows a person who left the team nothing of it, and cannot touch its items', async () => {
+    const s = setup()
+    const owner = await signIn(s, 'todo-own2@example.com')
+    const team = (await (
+      await org(s, owner, 'create', { name: 'Gone', slug: 'gone-todo' })
+    ).json()) as {
+      id: string
+    }
+    await add(s, owner, 'team secret')
+    const item = (await list(s, owner)).todos[0]!
+    const outsider = await signIn(s, 'todo-out@example.com')
+    // A removed member's session still points at the team: nothing clears it.
+    await setWorkspace('todo-out@example.com', team.id)
+    const view = await list(s, outsider)
+    expect(view.workspace.teamId).toBeNull()
+    expect(view.todos).toHaveLength(0)
+    const tick = await s.call(`/api/todos/${item.id}`, {
+      method: 'PATCH',
+      headers: { cookie: outsider, ...json },
+      body: JSON.stringify({ done: true })
+    })
+    expect(tick.status).toBe(404)
+    expect(
+      (await s.call(`/api/todos/${item.id}`, { method: 'DELETE', headers: { cookie: outsider } }))
+        .status
+    ).toBe(404)
+  })
+
+  it('validates the title, and is part of the data export', async () => {
+    const s = setup()
+    const cookie = await signIn(s, 'todo-exp@example.com')
+    expect((await add(s, cookie, '   ')).status).toBe(400)
+    expect((await add(s, cookie, 'x'.repeat(201))).status).toBe(400)
+    await add(s, cookie, 'water the plants')
+    const data = (await (await s.call('/api/account/export', { headers: { cookie } })).json()) as {
+      todos: { team: string | null; title: string; done: boolean }[]
+    }
+    expect(data.todos).toEqual([
+      expect.objectContaining({ team: null, title: 'water the plants', done: false })
+    ])
+  })
+
+  it('removes a team items with the team', async () => {
+    const s = setup()
+    const owner = await signIn(s, 'todo-own3@example.com')
+    const team = (await (
+      await org(s, owner, 'create', { name: 'Temp', slug: 'temp-todo' })
+    ).json()) as {
+      id: string
+    }
+    await add(s, owner, 'short lived')
+    await org(s, owner, 'delete', { organizationId: team.id })
+    const left = await bindings.DB.prepare(
+      'SELECT COUNT(*) AS n FROM todo WHERE organization_id = ?'
+    )
+      .bind(team.id)
+      .first<{ n: number }>()
+    expect(left?.n).toBe(0)
+  })
+})
+
 describe('single sign-on (OpenID Connect)', () => {
   const json = { 'content-type': 'application/json' }
   const provider = (providerId: string, extra: Record<string, unknown> = {}): string =>

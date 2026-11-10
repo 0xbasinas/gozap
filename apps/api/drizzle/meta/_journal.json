@@ -169,6 +169,13 @@
       "when": 1794167790697,
       "tag": "0023_worthless_lily_hollister",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1794309924881,
+      "tag": "0024_flat_absorbing_man",
+      "breakpoints": true
     }
   ]
 }
