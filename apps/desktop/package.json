@@ -32,7 +32,7 @@
     "@electron-toolkit/utils": "^4.0.0",
     "@sentry/electron": "^8.3.0",
     "better-auth": "^1.7.18",
-    "conf": "^15.0.2",
+    "conf": "^16.0.0",
     "electron-log": "^5.4.4",
     "electron-updater": "^6.8.11",
     "tw-animate-css": "catalog:"
