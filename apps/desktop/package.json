@@ -28,10 +28,10 @@
     "test:update": "node scripts/prepare-update-e2e.mjs && playwright test -c playwright.update.config.ts"
   },
   "dependencies": {
-    "@better-auth/electron": "^1.7.18",
+    "@better-auth/electron": "^1.7.22",
     "@electron-toolkit/utils": "^4.0.0",
-    "@sentry/electron": "^8.3.0",
-    "better-auth": "^1.7.18",
+    "@sentry/electron": "^8.4.0",
+    "better-auth": "^1.7.22",
     "conf": "^15.0.2",
     "electron-log": "^5.4.4",
     "electron-updater": "^6.8.11",

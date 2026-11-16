@@ -12,12 +12,12 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@better-auth/api-key": "1.7.18",
-    "@better-auth/electron": "^1.7.18",
-    "@better-auth/passkey": "^1.7.18",
-    "@better-auth/sso": "1.7.18",
+    "@better-auth/api-key": "1.7.22",
+    "@better-auth/electron": "^1.7.22",
+    "@better-auth/passkey": "^1.7.22",
+    "@better-auth/sso": "1.7.22",
     "@repo/shared": "workspace:*",
-    "better-auth": "^1.7.18",
+    "better-auth": "^1.7.22",
     "react": "catalog:",
     "react-dom": "catalog:",
     "react-router": "^8.5.1"
