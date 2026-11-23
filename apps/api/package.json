@@ -38,11 +38,11 @@
     "zod": "catalog:"
   },
   "devDependencies": {
-    "@cloudflare/vitest-plugin": "^1.8.1",
-    "auth": "^1.7.22",
+    "@cloudflare/vitest-plugin": "^1.8.5",
+    "auth": "^1.7.26",
     "drizzle-kit": "^0.31.11",
     "typescript": "catalog:",
     "vitest": "catalog:",
-    "wrangler": "^4.161.0"
+    "wrangler": "^4.165.0"
   }
 }
